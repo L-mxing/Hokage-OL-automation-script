@@ -1,0 +1,147 @@
+import sys
+import time
+
+import pyautogui
+
+# ================= 配置区域 =================
+# 图片路径
+IMG_ENTRY = 'image1/QZ_Entrance.png'         # 强者降临入口图标
+IMG_START_WAR = 'image1/QZ_start_btn.png'    # 开战按钮
+IMG_VICTORY = 'image1/QZ_victory_btn.png'   # 胜利标志按钮
+IMG_CLEAR = 'image1/QZ_clear_btn.png'          # 通关奖励确认按钮
+
+# 搜索区域（加速匹配）
+REGION_ENTRY = (1130, 71, 245, 55)  # 强者降临入口搜索区域
+REGION_START_WAR = (896, 601, 127, 39)  # 开战按钮搜索区域
+REGION_VICTORY = (896, 624, 129, 39)  # 胜利标志按钮搜索区域
+REGION_CLEAR = (888, 639, 125, 34)  # 通关奖励确认按钮区域
+
+# 固定点击坐标
+POS_ENTER_BATTLE = (800, 660)  # “进入战斗”按钮
+POS_START_WAR = (955, 620)  # 开战按钮（如果图像识别失败，则点击此坐标）
+POS_CONFIRM = (956, 643)  # 胜利后“确认”按钮
+POS_CLEAR_CONFIRM = (945, 655)  # 通关奖励确认按钮
+
+# 循环次数
+ROUNDS = 6
+
+# 全局参数
+CONFIDENCE = 0.8  # 图像识别精度
+CLICK_DURATION = 0.3  # 点击前鼠标移动耗时（秒）
+WAIT_TIMEOUT = 40  # 等待图片出现的最长时间（秒）
+RETRY_INTERVAL = 0.5  # 检查间隔
+
+
+# ===========================================
+
+def click_pos(x, y, duration=CLICK_DURATION):
+    """移动并点击指定坐标"""
+    pyautogui.moveTo(x, y, duration=duration)
+    pyautogui.click()
+
+
+def wait_and_click_image(image_path, region=None, confidence=CONFIDENCE,
+                         timeout=WAIT_TIMEOUT, desc=""):
+    """
+    等待图片出现并点击其中心（或偏移位置）
+    :param image_path: 模板图片路径
+    :param region: 搜索区域 (left, top, width, height)
+    :param confidence: 匹配精度
+    :param timeout: 超时秒数
+    :param desc: 描述文字（用于日志）
+    :return: True 点击成功，False 超时未找到
+    """
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        try:
+            location = pyautogui.locateOnScreen(image_path, region=region, confidence=confidence)
+            if location:
+                print(f"✅ 检测到 {desc} 并点击")
+                click_x, click_y = pyautogui.center(location)
+                click_pos(click_x, click_y)
+                return True
+        except Exception as e:
+            # pyautogui有时会抛出异常，忽略继续
+            pass
+        time.sleep(RETRY_INTERVAL)
+    print(f"⚠️ 超时未找到图片: {image_path}")
+    return False
+
+
+def do_battle_round(round_num):
+    """
+    执行一次强者降临关卡（完全依照原脚本逻辑）
+    :param round_num: 当前轮次
+    :return: True 成功，False 失败
+    """
+    print(f"\n====== 第 {round_num} 轮开始 ======")
+
+    # 1. 点击“强者降临”入口（使用图像识别，点击图片中心）
+    print("寻找强者降临入口...")
+
+    entry = wait_and_click_image(IMG_ENTRY, region=REGION_ENTRY,desc="强者降临入口")
+    if not entry:
+        print("❌ 未找到开始按钮，尝试重点击入口...")
+        time.sleep(1)
+        entry = wait_and_click_image(IMG_ENTRY, region=REGION_ENTRY)
+        if not entry:
+            print("❌ 战斗启动失败，跳过本场")
+            return False
+
+    time.sleep(1)  # 等待界面切换
+
+    # 2. 点击“进入战斗”（固定坐标）
+    print("点击进入战斗按钮...")
+    click_pos(POS_ENTER_BATTLE[0], POS_ENTER_BATTLE[1])
+    time.sleep(2)  # 等待加载
+
+    # 3.检测并点击开战按钮
+    print("等待并点击开战按钮...")
+    start_war = wait_and_click_image(IMG_START_WAR, region=REGION_START_WAR, desc="开战按钮")
+    if not start_war:
+        print("❌ 未检测到开战按钮，尝试直接点击固定坐标...")
+        click_pos(POS_START_WAR[0], POS_START_WAR[1])
+    time.sleep(1)  # 等待战斗开始
+
+    # 4. 检测胜利标志按钮
+    victory_found = wait_and_click_image(IMG_VICTORY, region=REGION_VICTORY, desc="胜利标志按钮")
+    if  not victory_found:
+        # 如果没检测到胜利，也尝试点击确认（防止漏检）
+        print("⚠️ 未检测到胜利，尝试直接点击确认")
+        click_pos(POS_CONFIRM[0], POS_CONFIRM[1])
+
+    # 5. 检测通关标识,领取奖励
+    clear_found = wait_and_click_image(IMG_CLEAR, region=REGION_CLEAR,
+                                       timeout=10, desc="通关奖励确认")
+    if clear_found:
+        # 点击通关后的“确认”按钮（固定坐标）
+        print("点击通关确认...")
+        click_pos(POS_CLEAR_CONFIRM[0], POS_CLEAR_CONFIRM[1])
+    else:
+        # 未检测到通关标识，可能已自动完成，也尝试点击确认
+        print("⚠️ 未检测到通关，尝试点击通关确认")
+        click_pos(POS_CLEAR_CONFIRM[0], POS_CLEAR_CONFIRM[1])
+
+    print(f"====== 第 {round_num} 轮完成 ======\n")
+    return True
+
+
+def main():
+    print("====== 强者降临自动刷图脚本启动 ======")
+    print(f"将执行 {ROUNDS} 轮")
+    print("请确保游戏窗口在最前，1秒后开始...")
+    time.sleep(1)
+
+    for i in range(1, ROUNDS + 1):
+        do_battle_round(i)
+        time.sleep(1)  # 轮次间隔
+
+    print("====== 全部轮次执行完毕 ======")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n用户手动中断")
+        sys.exit(0)
