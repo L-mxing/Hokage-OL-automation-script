@@ -2,8 +2,8 @@
 #
 # # # 从坐标(100, 200)开始，截取宽300，高400的区域
 # # img = pyautogui.screenshot(region=(1000, 613, 69, 20))
-# # img.save("zd_start_btn.png")
-# # print("局部截图已保存为 zd_start_btn.png")
+# # img.save("ZD_start_battle.png")
+# # print("局部截图已保存为 ZD_start_battle.png")
 #
 # a= pyautogui.size()
 # print(a)
