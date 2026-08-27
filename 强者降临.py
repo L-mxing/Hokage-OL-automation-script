@@ -1,14 +1,14 @@
 import sys
 import time
 
-import pyautogui
+from screenshot_utils import click_pos, wait_and_click_image
 
 # ================= 配置区域 =================
 # 图片路径
-IMG_ENTRY = 'image1/QZ_Entrance.png'         # 强者降临入口图标
-IMG_START_WAR = 'image1/QZ_start_btn.png'    # 开战按钮
-IMG_VICTORY = 'image1/QZ_victory_btn.png'   # 胜利标志按钮
-IMG_CLEAR = 'image1/QZ_clear_btn.png'          # 通关奖励确认按钮
+IMG_ENTRY = 'image1/QZ_Entrance.png'  # 强者降临入口图标
+IMG_START_WAR = 'image1/QZ_start_btn.png'  # 开战按钮
+IMG_VICTORY = 'image1/QZ_victory_btn.png'  # 胜利标志按钮
+IMG_CLEAR = 'image1/QZ_clear_btn.png'  # 通关奖励确认按钮
 
 # 搜索区域（加速匹配）
 REGION_ENTRY = (1130, 71, 245, 55)  # 强者降临入口搜索区域
@@ -25,47 +25,8 @@ POS_CLEAR_CONFIRM = (945, 655)  # 通关奖励确认按钮
 # 循环次数
 ROUNDS = 6
 
-# 全局参数
-CONFIDENCE = 0.8  # 图像识别精度
-CLICK_DURATION = 0.3  # 点击前鼠标移动耗时（秒）
-WAIT_TIMEOUT = 40  # 等待图片出现的最长时间（秒）
-RETRY_INTERVAL = 0.5  # 检查间隔
-
 
 # ===========================================
-
-def click_pos(x, y, duration=CLICK_DURATION):
-    """移动并点击指定坐标"""
-    pyautogui.moveTo(x, y, duration=duration)
-    pyautogui.click()
-
-
-def wait_and_click_image(image_path, region=None, confidence=CONFIDENCE,
-                         timeout=WAIT_TIMEOUT, desc=""):
-    """
-    等待图片出现并点击其中心（或偏移位置）
-    :param image_path: 模板图片路径
-    :param region: 搜索区域 (left, top, width, height)
-    :param confidence: 匹配精度
-    :param timeout: 超时秒数
-    :param desc: 描述文字（用于日志）
-    :return: True 点击成功，False 超时未找到
-    """
-    start_time = time.time()
-    while time.time() - start_time < timeout:
-        try:
-            location = pyautogui.locateOnScreen(image_path, region=region, confidence=confidence)
-            if location:
-                print(f"✅ 检测到 {desc} 并点击")
-                click_x, click_y = pyautogui.center(location)
-                click_pos(click_x, click_y)
-                return True
-        except Exception as e:
-            # pyautogui有时会抛出异常，忽略继续
-            pass
-        time.sleep(RETRY_INTERVAL)
-    print(f"⚠️ 超时未找到图片: {image_path}")
-    return False
 
 
 def do_battle_round(round_num):
@@ -79,7 +40,7 @@ def do_battle_round(round_num):
     # 1. 点击“强者降临”入口（使用图像识别，点击图片中心）
     print("寻找强者降临入口...")
 
-    entry = wait_and_click_image(IMG_ENTRY, region=REGION_ENTRY,desc="强者降临入口")
+    entry = wait_and_click_image(IMG_ENTRY, region=REGION_ENTRY, desc="强者降临入口")
     if not entry:
         print("❌ 未找到开始按钮，尝试重点击入口...")
         time.sleep(1)
@@ -105,14 +66,13 @@ def do_battle_round(round_num):
 
     # 4. 检测胜利标志按钮
     victory_found = wait_and_click_image(IMG_VICTORY, region=REGION_VICTORY, desc="胜利标志按钮")
-    if  not victory_found:
+    if not victory_found:
         # 如果没检测到胜利，也尝试点击确认（防止漏检）
         print("⚠️ 未检测到胜利，尝试直接点击确认")
         click_pos(POS_CONFIRM[0], POS_CONFIRM[1])
 
     # 5. 检测通关标识,领取奖励
-    clear_found = wait_and_click_image(IMG_CLEAR, region=REGION_CLEAR,
-                                       timeout=10, desc="通关奖励确认")
+    clear_found = wait_and_click_image(IMG_CLEAR, region=REGION_CLEAR, timeout=10, desc="通关奖励确认")
     if clear_found:
         # 点击通关后的“确认”按钮（固定坐标）
         print("点击通关确认...")
