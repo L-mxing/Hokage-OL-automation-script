@@ -18,25 +18,3 @@
 # print(location)
 # # Box(left=np.int64(1149), top=np.int64(83), width=39, height=35)
 
-import tkinter as tk
-from tkinter import scrolledtext # 带滚动条的“显示板”
-root = tk.Tk()
-root.title("生存演习控制台")
-root.geometry("350x450")
-root.resizable(True, True)
-
-btn_frame = tk.Frame(root)
-btn_frame.pack(pady=5)
-
-
-log_text = scrolledtext.ScrolledText(root, wrap=tk.WORD, font=("Consolas", 10))
-log_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-
-
-start_btn = tk.Button(btn_frame, text="开始演习", width=15)
-start_btn.pack(side=tk.LEFT, padx=5)
-
-clear_btn = tk.Button(btn_frame, text="清空日志", width=15)
-clear_btn.pack(side=tk.LEFT, padx=5)
-
-root.mainloop()

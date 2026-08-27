@@ -28,7 +28,7 @@ class SurvivalGUI:
 
         self.process = None
         self.script_dir = os.path.dirname(os.path.abspath(__file__))  # 脚本所在目录
-        self.script_path = os.path.join(self.script_dir, "生存演习修改.py")  # 拼接路径
+        self.script_path = os.path.join(self.script_dir, "生存演习.py")  # 拼接路径
 
     def clear_log(self):
         self.log_text.delete(1.0, tk.END)
