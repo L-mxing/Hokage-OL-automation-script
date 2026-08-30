@@ -6,10 +6,10 @@ from screenshot_utils import click_pos, wait_and_click_image
 # ================= 配置区域 =================
 
 # 图片相对路径
-IMG_DUNGEON_ENTRANCE = 'image1/ZD_dungeon_entrance.png'  # 组队副本入口
-IMG_CONFIRM_ENTER = 'image1/ZD_confirm_enter.png'  # 确认进入
-IMG_START_BATTLE = 'image1/ZD_start_battle.png'  # 开战按钮
-IMG_SETTLEMENT = 'image1/ZD_settlement.png'  # 结算返回按钮
+IMG_DUNGEON_ENTRANCE = 'image/ZD/ZD_01_dungeon_entrance.png'  # 组队副本入口
+IMG_CONFIRM_ENTER = 'image/ZD/ZD_02_confirm_enter.png'  # 确认进入
+IMG_START_BATTLE = 'image/ZD/ZD_03_start_battle.png'  # 开战按钮
+IMG_SETTLEMENT = 'image/ZD/ZD_04_settlement.png'  # 结算返回按钮
 
 # 图像搜索范围
 REGION_DUNGEON_ENTRANCE = (20, 186, 200, 192)  # 组队副本入口
@@ -48,7 +48,7 @@ def do_battle_round(round_num):
             entry = wait_and_click_image(IMG_DUNGEON_ENTRANCE, region=REGION_DUNGEON_ENTRANCE,
                                          desc='组队副本入口')
             if not entry:
-                print("❌ 战斗启动失败，跳过本场")
+                print("❌ 寻找组队副本入口失败")
                 return False
 
         time.sleep(1.5)
@@ -90,7 +90,6 @@ def do_battle_round(round_num):
 # ---------- 主流程 ----------
 def main():
     print("====== 组队副本自动刷图脚本启动 ======")
-    print("脚本启动，按 Ctrl + C 可停止")
     print(f"将执行 {ROUNDS} 轮")
     print("请确保游戏窗口在最前，1秒后开始...")
     time.sleep(1)
@@ -103,8 +102,4 @@ def main():
 
 
 if __name__ == "__main__":
-    try:
         main()
-    except KeyboardInterrupt:
-        print("\n用户中断，脚本退出")
-        sys.exit(0)

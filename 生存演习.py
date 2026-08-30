@@ -1,17 +1,17 @@
 import time
 
-from screenshot_utils import click_pos, wait_and_click_image
+from screenshot_utils import click_pos, wait_and_click_image,wait_image
 
 # ================= 配置区域 =================
 # 图片路径
-IMG_ENTRY = 'image1/SC_Entrance.png'
-IMG_START = 'image1/SC_start_btn.png'
-IMG_VICTORY = 'image1/SC_victory_flag.png'
+IMG_ENTRY = 'image/SC/SC_01_Entrance.png'
+IMG_START = 'image/SC/SC_02_start_btn.png'
+IMG_VICTORY = 'image/SC/SC_03_victory_flag.png'
 
 # 区域限制（加速匹配）
 REGION_ENTRY = (1130, 76, 270, 70)  # 生存入口
 REGION_START = (923, 225, 92, 35)  # 开始按钮
-REGION_VICTORY = (900, 500, 100, 50)  # 胜利标志
+REGION_VICTORY = (895,641,134,40) # 胜利后确认
 
 # 固定点击坐标（用于确认按钮等）
 POS_RESET = (1026, 955)  # 重置
@@ -43,27 +43,33 @@ def do_battle(entry_x, entry_y):
     time.sleep(0.5)
 
     # 2. 等待并点击“开始战斗”
-    success = wait_and_click_image(IMG_START, region=REGION_START)
+    success = wait_and_click_image(IMG_START, region=REGION_START,desc='开始按钮')
     if not success:
         print("❌ 未找到开始按钮，尝试重点击入口...")
         click_pos(entry_x, entry_y)  # 重新点击入口
         time.sleep(1)
-        success = wait_and_click_image(IMG_START, region=REGION_START)
+        success = wait_and_click_image(IMG_START, region=REGION_START,desc='开始按钮')
         if not success:
             print("❌ 战斗启动失败，跳过本场")
             return False
 
     # 3. 等待胜利标志（出现后点击确定按钮）
-    victory_found = wait_and_click_image(IMG_VICTORY, region=REGION_VICTORY)  # 这里只是等待出现，不点击胜利图
-    if victory_found:
-        # 点击确认按钮（固定坐标）
-        click_pos(POS_CONFIRM_1[0], POS_CONFIRM_1[1])
-        print("✅ 战斗完成")
-        return True
+    center = wait_image(IMG_VICTORY, region=REGION_VICTORY, confidence=0.7,
+                        desc='胜利后确认按钮')
+    if center:
+        print("发现胜利确认按钮")
+        # 校验：中心应该接近 (958, 661)，允许 ±40px
+        if abs(center[0] - 958) < 40 and abs(center[1] - 661) < 30:
+            click_pos(center[0], center[1])
+        else:
+            print("坐标偏差大，点击固定指标")
+            click_pos(POS_CONFIRM_1[0], POS_CONFIRM_1[1])  # 偏差大，用固定坐标兜底
     else:
-        print("⚠️ 未检测到胜利标志，但仍尝试点击确认")
+        print("未检测到胜利确认按钮，尝试点击固定坐标")
         click_pos(POS_CONFIRM_1[0], POS_CONFIRM_1[1])
-        return False
+
+    return True
+
 
 
 def main():
@@ -71,7 +77,7 @@ def main():
 
     # 1. 点击生存入口（使用图像识别）
     print("寻找生存入口...")
-    if not wait_and_click_image(IMG_ENTRY, region=REGION_ENTRY):
+    if not wait_and_click_image(IMG_ENTRY, region=REGION_ENTRY,desc='生存入口'):
         print("❌ 无法找到生存入口，退出")
         return
     time.sleep(1)

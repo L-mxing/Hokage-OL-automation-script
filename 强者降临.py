@@ -5,10 +5,10 @@ from screenshot_utils import click_pos, wait_and_click_image
 
 # ================= 配置区域 =================
 # 图片路径
-IMG_ENTRY = 'image1/QZ_Entrance.png'  # 强者降临入口图标
-IMG_START_WAR = 'image1/QZ_start_btn.png'  # 开战按钮
-IMG_VICTORY = 'image1/QZ_victory_btn.png'  # 胜利标志按钮
-IMG_CLEAR = 'image1/QZ_clear_btn.png'  # 通关奖励确认按钮
+IMG_ENTRY = 'image/QZ/QZ_01_Entrance.png'  # 强者降临入口图标
+IMG_START_WAR = 'image/QZ/QZ_02_start_btn.png'  # 开战按钮
+IMG_VICTORY = 'image/QZ/QZ_03_victory_btn.png'  # 胜利标志按钮
+IMG_CLEAR = 'image/QZ/QZ_04_clear_btn.png'  # 通关奖励确认按钮
 
 # 搜索区域（加速匹配）
 REGION_ENTRY = (1130, 71, 245, 55)  # 强者降临入口搜索区域
@@ -100,8 +100,4 @@ def main():
 
 
 if __name__ == "__main__":
-    try:
         main()
-    except KeyboardInterrupt:
-        print("\n用户手动中断")
-        sys.exit(0)

@@ -1,7 +1,7 @@
 ﻿"""
 hokage_ol_gui.py
-整合三个脚本为 GUI：生存演习.py、组队副本.py、强者降临.py
-要求：不修改原脚本，按固定顺序执行（生存 → 组队 → 强者），支持停止、日志实时显示、关闭时清理子进程。
+整合脚本为 GUI：生存演习.py、组队副本.py、强者降临.py、八门遁甲.py
+要求：不修改原脚本，按固定顺序执行（生存 → 组队 → 强者 → 八门），支持停止、日志实时显示、关闭时清理子进程。
 """
 
 import os
@@ -29,14 +29,24 @@ SCRIPTS = [
     ("生存演习.py", "生存演习"),
     ("组队副本.py", "组队副本"),
     ("强者降临.py", "强者降临"),
+    ("八门遁甲.py", "八门遁甲"),
+    ("排位战.py", "排位战"),
 ]
 
 # GUI 主程序
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("脚本执行器 - 功能界面化")
-        self.geometry("350x400")
+        self.title("火影忍者online自动化脚本")
+        self.geometry("300x360")
+        # 固定窗口大小，不可调整
+        self.resizable(False, False)
+        # 默认置顶，可由用户切换
+        self.var_topmost = tk.BooleanVar(value=True)
+        try:
+            self.attributes('-topmost', True)
+        except Exception:
+            pass
 
         # 状态
         self.running = False
@@ -54,27 +64,46 @@ class App(tk.Tk):
 
     def _build_ui(self):
         frame_top = ttk.LabelFrame(self, text="脚本选择")
-        frame_top.pack(fill="x", padx=8, pady=8)
+        frame_top.pack(fill="x", padx=6, pady=6)
 
-        # 全选/反选
+        # 全选/反选：放在最上方左侧
         self.var_all = tk.BooleanVar(value=False)
-        cb_all = ttk.Checkbutton(frame_top, text="全选", variable=self.var_all, command=self._toggle_all)
-        cb_all.grid(row=0, column=0, padx=6, pady=6, sticky="w")
+        cb_all = ttk.Checkbutton(frame_top, text="全选", variable=self.var_all, command=self._toggle_all, takefocus=False)
+        cb_all.grid(row=0, column=0, padx=4, pady=2, sticky="w")
+        cb_all.bind("<ButtonRelease-1>", lambda e: self.focus_set())
 
-        for idx, (_, name) in enumerate(SCRIPTS, start=1):
-            cb = ttk.Checkbutton(frame_top, text=name, variable=self.vars[idx-1])
-            cb.grid(row=0, column=idx, padx=6, pady=6, sticky="w")
+        # 布局列配置：将列权重设为 0，避免自动扩展拉开复选框间距
+        max_cols = 3
+        for c in range(max_cols):
+            frame_top.grid_columnconfigure(c, weight=0)
+
+        # 置顶复选放在全选所在行的最右侧，保证不超过窗口边界
+        cb_top = ttk.Checkbutton(frame_top, text="置顶", variable=self.var_topmost, command=self._toggle_topmost, takefocus=False)
+        cb_top.grid(row=0, column=max_cols-1, padx=4, pady=2, sticky="e")
+        cb_top.bind("<ButtonRelease-1>", lambda e: self.focus_set())
+
+        # 脚本选择项，排成每行最多3个的网格，位于全选下方，间距更紧凑
+        for idx, (_, name) in enumerate(SCRIPTS):
+            row = 1 + (idx // max_cols)
+            col = idx % max_cols
+            cb = ttk.Checkbutton(frame_top, text=name, variable=self.vars[idx], takefocus=False)
+            # 将左右间距缩小为 2 像素，垂直间距为 1 像素，以实现更紧凑的一行布局
+            cb.grid(row=row, column=col, padx=2, pady=1, sticky="w")
+            cb.bind("<ButtonRelease-1>", lambda e: self.focus_set())
 
         frame_ctrl = ttk.Frame(self)
-        frame_ctrl.pack(fill="x", padx=8)
-        self.btn_start = ttk.Button(frame_ctrl, text="开始执行 (F10)", command=self.start)
-        self.btn_start.pack(side="left", padx=6, pady=6)
+        frame_ctrl.pack(fill="x", padx=6)
+        self.btn_start = ttk.Button(frame_ctrl, text="执行 (F10)", command=self.start)
+        self.btn_start.pack(side="left", padx=4, pady=4)
         self.btn_stop = ttk.Button(frame_ctrl, text="停止 (F11)", command=self.stop, state="disabled")
-        self.btn_stop.pack(side="left", padx=6, pady=6)
+        self.btn_stop.pack(side="left", padx=4, pady=4)
+        self.btn_clear = ttk.Button(frame_ctrl, text="清空日志", command=self.clear_log)
+        self.btn_clear.pack(side="left", padx=4, pady=4)
 
         frame_log = ttk.LabelFrame(self, text="执行日志")
-        frame_log.pack(fill="both", expand=True, padx=8, pady=8)
-        self.txt_log = tk.Text(frame_log, wrap="word", state="normal")
+        frame_log.pack(fill="both", expand=True, padx=6, pady=6)
+        # 不允许用户编辑日志框，但程序可写入（通过切换 state）
+        self.txt_log = tk.Text(frame_log, wrap="word", state="disabled")
         self.txt_log.pack(side="left", fill="both", expand=True)
         sb = ttk.Scrollbar(frame_log, orient="vertical", command=self.txt_log.yview)
         sb.pack(side="right", fill="y")
@@ -100,6 +129,31 @@ class App(tk.Tk):
         for var in self.vars:
             var.set(v)
 
+    def _toggle_topmost(self):
+        """切换窗口置顶状态"""
+        val = bool(self.var_topmost.get())
+        try:
+            self.attributes('-topmost', val)
+            self._log('窗口已置顶' if val else '取消窗口置顶')
+        except Exception:
+            # 某些平台或环境可能不支持attributes
+            pass
+
+    def clear_log(self):
+        # 允许程序清空但禁止用户编辑
+        try:
+            self.txt_log.config(state='normal')
+            self.txt_log.delete("1.0", tk.END)
+            self.txt_log.config(state='disabled')
+        except Exception:
+            pass
+        # 清空积压日志，避免刚清空后又被旧队列内容补回
+        while not self.log_q.empty():
+            try:
+                self.log_q.get_nowait()
+            except queue.Empty:
+                break
+
     # 日志入队
     def _log(self, text, flush_immediately=False):
         ts = time.strftime("[%H:%M:%S]")
@@ -112,8 +166,14 @@ class App(tk.Tk):
         try:
             while True:
                 line = self.log_q.get_nowait()
-                self.txt_log.insert(tk.END, line + "\n")
-                self.txt_log.see(tk.END)
+                try:
+                    # 临时允许写入，再恢复为不可编辑
+                    self.txt_log.config(state='normal')
+                    self.txt_log.insert(tk.END, line + "\n")
+                    self.txt_log.see(tk.END)
+                    self.txt_log.config(state='disabled')
+                except Exception:
+                    pass
         except queue.Empty:
             pass
         # 继续调度
