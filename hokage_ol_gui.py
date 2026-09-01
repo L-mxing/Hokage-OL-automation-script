@@ -1,7 +1,7 @@
 ﻿"""
 hokage_ol_gui.py
-整合脚本为 GUI：生存演习.py、组队副本.py、强者降临.py、八门遁甲.py
-要求：不修改原脚本，按固定顺序执行（生存 → 组队 → 强者 → 八门），支持停止、日志实时显示、关闭时清理子进程。
+整合脚本为 GUI：生存演习.py、组队副本.py、强者降临.py、八门遁甲.py、排位战.py
+要求：不修改原脚本，按固定顺序执行（生存 → 组队 → 强者 → 八门 → 排位），支持停止、日志实时显示、关闭时清理子进程。
 """
 
 import os
@@ -14,6 +14,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import ctypes
 from ctypes import wintypes, byref
+import locale
 
 # 确保工作目录为脚本所在目录
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -53,6 +54,7 @@ class App(tk.Tk):
         self.current_proc = None
         self.stop_flag = threading.Event()
         self.log_q = queue.Queue()
+        self.cmd_q = queue.Queue()
 
         # 选择变量（与SCRIPTS对应）
         self.vars = [tk.BooleanVar(value=False) for _ in SCRIPTS]
@@ -159,10 +161,25 @@ class App(tk.Tk):
         ts = time.strftime("[%H:%M:%S]")
         self.log_q.put(f"{ts} {text}")
         if flush_immediately:
-            self._flush_log_queue()
+            self._drain_log_queue()
 
     # 定时从队列写入 Text（避免跨线程直接访问）
     def _flush_log_queue(self):
+        self._drain_log_queue()
+        # 处理热键线程发来的命令（在主线程执行，避免跨线程操作 Tk）
+        try:
+            while True:
+                cmd = self.cmd_q.get_nowait()
+                if cmd == "start":
+                    self.start()
+                elif cmd == "stop":
+                    self.stop()
+        except queue.Empty:
+            pass
+        # 继续调度
+        self.after(100, self._flush_log_queue)
+
+    def _drain_log_queue(self):
         try:
             while True:
                 line = self.log_q.get_nowait()
@@ -176,8 +193,6 @@ class App(tk.Tk):
                     pass
         except queue.Empty:
             pass
-        # 继续调度
-        self.after(100, self._flush_log_queue)
 
     # 启动任务
     def start(self, event=None):
@@ -268,17 +283,23 @@ class App(tk.Tk):
         self._log(f"运行命令：{' '.join(cmd)}")
 
         try:
-            # 使用 Popen 直接接收子进程输出，避免子进程把输出写到控制台而丢失。
-            p = subprocess.Popen(
-                cmd,
+            # 子进程在 Windows 管道输出默认使用系统代码页（中文系统通常为 GBK），
+            # 按本地编码解码，避免中文日志乱码。
+            encoding = locale.getpreferredencoding(False) or "utf-8"
+            popen_kwargs = dict(
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 bufsize=1,
                 text=True,
-                encoding="utf-8",
+                encoding=encoding,
                 errors="replace",
             )
+            # Windows 下隐藏子进程控制台窗口
+            if os.name == "nt":
+                popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+            # 使用 Popen 直接接收子进程输出，避免子进程把输出写到控制台而丢失。
+            p = subprocess.Popen(cmd, **popen_kwargs)
             self.current_proc = p
         except Exception as e:
             self._log(f"启动脚本失败：{e}")
@@ -390,9 +411,9 @@ class App(tk.Tk):
                     except Exception:
                         hk_id = None
                     if hk_id == getattr(self, '_hk_id_start', None):
-                        self.after(0, self.start)
+                        self.cmd_q.put("start")
                     elif hk_id == getattr(self, '_hk_id_stop', None):
-                        self.after(0, self.stop)
+                        self.cmd_q.put("stop")
                 user32.TranslateMessage(byref(msg))
                 user32.DispatchMessageW(byref(msg))
 
