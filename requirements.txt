@@ -4,3 +4,4 @@ opencv-python==5.0.0.93
 pillow==12.3.0
 pyautogui==0.9.54
 mss==10.2.0
+rapidocr_onnxruntime==1.2.3

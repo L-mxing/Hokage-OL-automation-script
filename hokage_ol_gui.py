@@ -1,7 +1,7 @@
 ﻿"""
 hokage_ol_gui.py
-整合脚本为 GUI：生存演习.py、组队副本.py、强者降临.py、八门遁甲.py、排位战.py
-要求：不修改原脚本，按固定顺序执行（生存 → 组队 → 强者 → 八门 → 排位），支持停止、日志实时显示、关闭时清理子进程。
+整合脚本为 GUI：生存演习.py、组队副本.py、强者降临.py、八门遁甲.py、排位战.py、忍者测验答题.py
+要求：不修改原脚本，按固定顺序执行（生存 → 组队 → 强者 → 八门 → 排位 → 忍者测验），支持停止、日志实时显示、关闭时清理子进程。
 """
 
 import os
@@ -14,15 +14,18 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import ctypes
 from ctypes import wintypes, byref
-import locale
 
-# 确保工作目录为脚本所在目录
+# 确保工作目录为脚本所在目录（子进程继承该 cwd，image/xxx.png 相对路径才有效）
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 os.chdir(BASE_DIR)
 
 # Windows VK codes (used for global hotkeys)
 VK_F10 = 0x79
 VK_F11 = 0x7A
+
+# Windows 消息常量（热键线程用）
+WM_HOTKEY = 0x0312
+WM_QUIT = 0x0012
 
 
 # 脚本（按固定顺序执行）
@@ -32,6 +35,7 @@ SCRIPTS = [
     ("强者降临.py", "强者降临"),
     ("八门遁甲.py", "八门遁甲"),
     ("排位战.py", "排位战"),
+    ("忍者测验答题.py", "忍者测验答题"),
 ]
 
 # GUI 主程序
@@ -52,6 +56,7 @@ class App(tk.Tk):
         # 状态
         self.running = False
         self.current_proc = None
+        self._proc_lock = threading.Lock()   # 保护 current_proc 的终止操作
         self.stop_flag = threading.Event()
         self.log_q = queue.Queue()
         self.cmd_q = queue.Queue()
@@ -174,24 +179,32 @@ class App(tk.Tk):
                     self.start()
                 elif cmd == "stop":
                     self.stop()
+                elif cmd == "ui_done":
+                    self.btn_start.config(state="normal")
+                    self.btn_stop.config(state="disabled")
+                    self._log("所有选中脚本执行完毕或已停止")
         except queue.Empty:
             pass
         # 继续调度
         self.after(100, self._flush_log_queue)
 
     def _drain_log_queue(self):
+        # 一次性批量取出并写入，减少 state 切换与 Tk 调用次数
+        lines = []
         try:
             while True:
-                line = self.log_q.get_nowait()
-                try:
-                    # 临时允许写入，再恢复为不可编辑
-                    self.txt_log.config(state='normal')
-                    self.txt_log.insert(tk.END, line + "\n")
-                    self.txt_log.see(tk.END)
-                    self.txt_log.config(state='disabled')
-                except Exception:
-                    pass
+                lines.append(self.log_q.get_nowait())
         except queue.Empty:
+            pass
+        if not lines:
+            return
+        try:
+            self.txt_log.config(state='normal')
+            for line in lines:
+                self.txt_log.insert(tk.END, line + "\n")
+            self.txt_log.see(tk.END)
+            self.txt_log.config(state='disabled')
+        except Exception:
             pass
 
     # 启动任务
@@ -224,34 +237,38 @@ class App(tk.Tk):
         self._terminate_current_process()
 
     def _terminate_current_process(self):
-        p = self.current_proc
-        if p and p.poll() is None:
-            try:
-                pid = p.pid
-                # 尝试优雅终止
-                p.terminate()
-                # 等待短暂时间
+        # 加锁防止 stop()/轮询/关闭窗口并发触发重复终止
+        with self._proc_lock:
+            p = self.current_proc
+            if p and p.poll() is None:
                 try:
-                    p.wait(timeout=2)
-                except subprocess.TimeoutExpired:
-                    # 强制杀掉进程树 (Windows 使用 taskkill)
-                    if os.name == 'nt':
-                        try:
-                            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                        except Exception:
-                            pass
-                    else:
-                        try:
-                            p.kill()
-                        except Exception:
-                            pass
-            except Exception as e:
-                self._log(f"终止进程失败：{e}")
+                    pid = p.pid
+                    # 尝试优雅终止
+                    p.terminate()
+                    # 等待短暂时间
+                    try:
+                        p.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        # 强制杀掉进程树 (Windows 使用 taskkill)
+                        if os.name == 'nt':
+                            try:
+                                subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                            except Exception as e:
+                                self._log(f"taskkill 失败：{e}")
+                        else:
+                            try:
+                                p.kill()
+                            except Exception as e:
+                                self._log(f"kill 失败：{e}")
+                except Exception as e:
+                    self._log(f"终止进程失败：{e}")
 
     # 顺序执行选中脚本
     def _run_sequence(self, selected):
+        # selected 已按 SCRIPTS 固定顺序过滤，直接遍历即可
         try:
-            for script in [name for name, _ in SCRIPTS if name in selected]:
+            for script in selected:
                 if self.stop_flag.is_set():
                     self._log("流程被中止，退出执行序列")
                     break
@@ -268,9 +285,8 @@ class App(tk.Tk):
         finally:
             self.running = False
             self.current_proc = None
-            self.after(0, lambda: self.btn_start.config(state='normal'))
-            self.after(0, lambda: self.btn_stop.config(state='disabled'))
-            self._log("所有选中脚本执行完毕或已停止")
+            # 通过队列通知主线程恢复按钮状态（避免跨线程调用 Tk）
+            self.cmd_q.put("ui_done")
 
     # 执行单个脚本并实时输出到日志，返回退出码
     def _run_script_and_stream(self, script_name):
@@ -283,18 +299,21 @@ class App(tk.Tk):
         self._log(f"运行命令：{' '.join(cmd)}")
 
         try:
-            # 子进程在 Windows 管道输出默认使用系统代码页（中文系统通常为 GBK），
-            # 按本地编码解码，避免中文日志乱码。
-            encoding = locale.getpreferredencoding(False) or "utf-8"
+            # 编码约定：子进程管道输出统一按 UTF-8 处理。
+            # 通过 PYTHONIOENCODING 强制子进程 stdout/stderr 用 UTF-8 输出，
+            # 父进程按 UTF-8 解码，避免依赖系统区域设置（中文系统 GBK）导致的乱码。
             popen_kwargs = dict(
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 bufsize=1,
                 text=True,
-                encoding=encoding,
+                encoding="utf-8",
                 errors="replace",
             )
+            popen_env = dict(os.environ)
+            popen_env["PYTHONIOENCODING"] = "utf-8"
+            popen_kwargs["env"] = popen_env
             # Windows 下隐藏子进程控制台窗口
             if os.name == "nt":
                 popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
@@ -357,6 +376,7 @@ class App(tk.Tk):
             if getattr(self, '_hotkey_thread', None) and self._hotkey_thread.is_alive():
                 return
             self._hotkey_stop_event.clear()
+            self._hotkey_ready = threading.Event()  # 热键线程设置完 thread_id 后置位
             self._hotkey_thread = threading.Thread(target=self._hotkey_worker, daemon=True)
             self._hotkey_thread.start()
         except Exception as e:
@@ -368,13 +388,13 @@ class App(tk.Tk):
             threading.current_thread().name = 'HotkeyThread'
             user32 = ctypes.windll.user32
             kernel32 = ctypes.windll.kernel32
-            WM_HOTKEY = 0x0312
 
             # 热键 id
             self._hk_id_start = 1
             self._hk_id_stop = 2
-            # 记录该线程 id，以便在注销时通知它
+            # 记录该线程 id，以便在注销时通知它；记录完成后再允许注销方读取
             self._hotkey_thread_id = kernel32.GetCurrentThreadId()
+            self._hotkey_ready.set()
 
             def _format_error(err):
                 buf = ctypes.create_unicode_buffer(256)
@@ -443,7 +463,8 @@ class App(tk.Tk):
 
             # 通知热键线程退出并唤醒
             self._hotkey_stop_event.set()
-            WM_QUIT = 0x0012
+            # 等线程设置好 thread_id 再投递 WM_QUIT，避免线程已阻塞在 GetMessageW 而无人唤醒
+            self._hotkey_ready.wait(1.0)
             tid = getattr(self, '_hotkey_thread_id', None)
             if tid:
                 try:

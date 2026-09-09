@@ -24,6 +24,8 @@ POS_DUNGEON_1 = (751, 445)  # 选择副本关卡
 POS_NO_PROMPT = (821, 603)
 POS_START_BATTLE = (888, 620)  # 开战按钮坐标
 POS_SETTLEMENT = (1235, 825)  # 返回游戏按钮
+POS_EXIT_DUNGEON = (1420,285) # 退出组队副本页面
+
 
 # 循环次数
 ROUNDS = 5
@@ -97,6 +99,8 @@ def main():
     for i in range(1, ROUNDS + 1):
         do_battle_round(i)
         time.sleep(2)  # 轮次间隔
+
+    click_pos(*POS_EXIT_DUNGEON)
 
     print("====== 全部轮次执行完毕 ======")
 

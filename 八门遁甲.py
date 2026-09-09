@@ -31,7 +31,11 @@ _sct = mss.MSS()                     # mss 全局实例，复用
 
 
 def get_pixel_color(x, y):
-    """抓取固定 1x1 区域取色，返回 (R, G, B)；失败返回 None"""
+    """
+    :param x: 色点的 x 坐标
+    :param y: 色点的 y 坐标
+    抓取固定 1x1 区域取色，返回 (R, G, B)；失败返回 None
+    """
     try:
         img = _sct.grab({"left": x, "top": y, "width": 1, "height": 1})
         return img.pixel(0, 0)[:3]
