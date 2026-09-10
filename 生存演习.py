@@ -9,8 +9,8 @@ IMG_START = 'image/SC/SC_02_start_btn.png'
 IMG_VICTORY = 'image/SC/SC_03_victory_flag.png'
 
 # 区域限制（加速匹配）
-REGION_ENTRY = (1130, 76, 270, 70)  # 生存入口
-REGION_START = (923, 225, 92, 35)  # 开始按钮
+REGION_ENTRY = (1020, 76, 380, 70)  # 生存入口
+REGION_START = (878,210,172,63)  # 开始按钮
 REGION_VICTORY = (895,641,134,40) # 胜利后确认
 
 # 固定点击坐标（用于确认按钮等）
@@ -84,34 +84,34 @@ def main():
 
     # 2. 重置（回到主界面）
     print("重置界面...")
-    click_pos(POS_RESET[0], POS_RESET[1])
+    click_pos(*POS_RESET)
     time.sleep(1)
 
     # 3. 第一场战斗
     print("执行第一场战斗...")
-    do_battle(BATTLES[0][0], BATTLES[0][1])
+    do_battle(*BATTLES[0])
 
     # 4. 第二场战斗（重复N次）
     for i in range(SECOND_BATTLE_REPEAT):
         print(f"执行第二场战斗 (第{i + 1}次)...")
-        do_battle(BATTLES[1][0], BATTLES[1][1])
+        do_battle(*BATTLES[1])
 
     # 5. 第三场战斗
     print("执行第三场战斗...")
-    do_battle(BATTLES[2][0], BATTLES[2][1])
+    do_battle(*BATTLES[2])
 
     # 6. 一键领取奖励
     print("领取奖励...")
     time.sleep(1.5)
-    click_pos(POS_COLLECT[0], POS_COLLECT[1])
+    click_pos(*POS_COLLECT)
     time.sleep(0.5)
-    click_pos(POS_CONFIRM_2[0], POS_CONFIRM_2[1])
+    click_pos(*POS_CONFIRM_2)
     time.sleep(0.5)
-    click_pos(POS_CONFIRM_3[0], POS_CONFIRM_3[1])
+    click_pos(*POS_CONFIRM_3)
 
     # 7. 退出生存演习
     print("退出演习...")
-    click_pos(POS_EXIT[0], POS_EXIT[1])
+    click_pos(*POS_EXIT)
 
     print("====== 全部完成 ======")
 
