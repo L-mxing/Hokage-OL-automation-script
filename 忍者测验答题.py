@@ -20,7 +20,7 @@
            - 命中 → 选择相似度最高的选项
            - 未命中 → 随机选择一个(用于建库,首次运行积累数据)
         4) 点击所选选项 → 点击提交按钮 (918, 750)
-        5) 区域 (1128, 404, 186, 56) 识别「正确率 x/10」判定对错
+        5) 区域 (1110, 395, 230, 75) 识别「正确率 x/10」判定对错（较原标定略扩大以容错）
            - 答对 → 写入 quiz_db.json(题目 + 正确答案)
            - 答错 → 写入 quiz_unknown.json(题目 + 全部 4 个选项)
         6) 点「提交」后游戏自动进入下一题(无需点击);最后一题提交后进入结算界面
@@ -37,8 +37,14 @@
 命令行:
     python 忍者测验答题.py                        # 一键全流程(默认)
     python 忍者测验答题.py --auto-answer          # 仅答题(已在答题界面时)
-    python 忍者测验答题.py --quiz                 # 只识别当前题目/选项(不点击)
+    python 忍者测验答题.py --quiz                 # 只识别当前题目/选项(不点击),
+                                                  # 并打印原始识别明细,用于排查漏检
     python 忍者测验答题.py --click --target "文字" --region x,y,w,h  # 点击指定文字
+
+识别参数(小数字/短文本识别率低时优先看这几个):
+    OCR_TEXT_SCORE      引擎内部置信度门槛,默认 0.5 会把低分短文本直接丢弃
+    OPTION_SCALE        选项区域放大倍数
+    OPTION_MIN_CONFIDENCE  选项置信度下限(在引擎返回之后才起作用)
 """
 from __future__ import annotations
 
@@ -47,8 +53,10 @@ import json
 import os
 import random
 import re
+import shutil
 import sys
 import time
+from collections import Counter
 from datetime import date
 from difflib import SequenceMatcher
 
@@ -57,7 +65,7 @@ import cv2
 import mss
 from rapidocr_onnxruntime import RapidOCR
 
-from screenshot_utils import click_pos
+from screenshot_utils import click_pos, ensure_utf8_stdout, check_screen_size
 
 # ================= 配置区域 =================
 
@@ -94,8 +102,30 @@ SIMILARITY_THRESHOLD = 0.55                    # 通用文字相似度下限
 MIN_CONFIDENCE = 0.3                           # OCR 置信度下限(题目等常规文字)
 OPTION_MIN_CONFIDENCE = 0.15                   # 选项置信度下限(单数字/短短语天然低)
 OPTION_SCALE = 2                               # 选项区域放大倍数(提升小文字识别率)
+OPTION_ROW_HALF = 15                           # 逐行补漏时,行带以行中心为基准的半高(总高 30px)
+OPTION_ROW_SCALE = 3                           # 逐行补漏时的放大倍数(裁得小,可以放大更多)
+# 选项文字在按钮内是**水平居中**的。实测 10 道题里真实选项的中心 x 恒为 921~922,
+# 而面板中心 = 753 + 332//2 = 919。据此可以滤掉"飘进选项区域"的系统滚动公告——
+# 实测有一条「转动组织幸运转盘获得」中心在 x=976(y 落在第 1 行),被误当成选项点掉了。
+OPTION_CENTER_X = OPTIONS_REGION[0] + OPTIONS_REGION[2] // 2
+OPTION_X_TOLERANCE = 45                        # 允许的中心 x 偏差(像素)
+# 逐行补漏用的引擎单独放宽内部阈值:它只负责"整区没检出的那一行",
+# 裁出来的是一条单行横带,放宽后误识别的风险很低,却能救回更多单数字。
+REC_ONLY_TEXT_SCORE = 0.2
+ACC_MIN_CONFIDENCE = 0.35                      # 正确率区置信度下限(防低分噪声混进拼接结果)
+
+# ★ OCR 引擎内部的置信度门槛 —— "单数字/两位数识别率极低"的根因就在这里。
+#   RapidOCR 默认 text_score=0.5,比它低的结果**在库内部就被丢弃且不返回**,
+#   所以下面那个 OPTION_MIN_CONFIDENCE=0.15 永远没机会生效。而单个数字/两位数
+#   这类短文本的置信度天然偏低(常落在 0.2~0.5),于是整体被判为"没识别到"。
+#   实测(4 种字体 x 4 个字号,单位数+双位数共 32 个样本,4 行全对才算通过):
+#       text_score=0.5(默认) → 7/32        text_score=0.25 → 31/32
+OCR_TEXT_SCORE = 0.25
 DB_KEY_SIM = 0.80                              # 题库查题相似度
+DB_KEY_MARGIN = 0.08                           # 最佳匹配需领先次优的幅度(防长共前缀题面互撞)
 ANSWER_TEXT_SIM = 0.65                         # 答案与选项相似度
+ANSWER_MARGIN = 0.08                           # 选项最佳匹配需领先次优的幅度
+MAX_CONSECUTIVE_UNREADABLE = 2                 # 连续N题识别不到题目即中止本轮(防在非答题界面误点)
 
 # ---- 窗口 ----
 GAME_WINDOW_TITLE = "火影忍者ol"               # 用于答题前激活窗口
@@ -103,15 +133,56 @@ GAME_WINDOW_TITLE = "火影忍者ol"               # 用于答题前激活窗口
 # ================= 引擎单例 =================
 
 _ocr_engine = None
+_rec_engine = None                 # "免检测"引擎,仅在逐行补漏时惰性创建
 _sct = mss.MSS()
+
+
+def _create_ocr_engine(**extra) -> RapidOCR:
+    """创建 OCR 引擎
+
+    关键参数 det_limit_type:RapidOCR 默认是 "min",含义是"把短边放大到
+    det_limit_side_len(736)"。题目区是 502x72 这种宽而扁的区域,短边 72 会被
+    放大 10 倍,实际送进检测模型的是 5132x736(378 万像素) —— 实测单次识别 734ms。
+    截图场景应改用 "max"(长边不超过 736),同样内容降到 6ms(实测)。
+
+    text_score:库内部的置信度门槛,详见 OCR_TEXT_SCORE 的注释。
+
+    注意:rapidocr_onnxruntime 1.2.3 的 UpdateParameters.update_det_params 会
+    无条件读取 det_dict['model_path'],只传 det_limit_* 会 KeyError,必须额外传
+    det_model_path=""(空串会让它回填默认模型路径)。这里先按正常写法尝试,
+    失败再补该参数,以便将来升级库后依然可用。
+    """
+    options = {"det_limit_type": "max", "det_limit_side_len": 736,
+               "text_score": OCR_TEXT_SCORE}
+    options.update(extra)
+    try:
+        return RapidOCR(**options)
+    except KeyError:
+        options["det_model_path"] = ""
+        return RapidOCR(**options)
 
 
 def get_ocr_engine() -> RapidOCR:
     """惰性初始化 OCR 引擎(单例)"""
     global _ocr_engine
     if _ocr_engine is None:
-        _ocr_engine = RapidOCR()
+        _ocr_engine = _create_ocr_engine()
     return _ocr_engine
+
+
+def get_rec_only_engine() -> RapidOCR:
+    """惰性初始化"免检测"引擎(单例):把整块裁剪当**一行**文本直接识别。
+
+    作用:单个数字/两位数在整区检测里很容易整条漏掉(检测模型对孤立的短文本
+    本来就弱)。免检测路线不经过检测模型,而识别模型内部会把文字高度归一化到
+    48px,反而更稳。仅在整区检测漏掉某一行时才会用到,所以做成惰性创建——
+    用不上就不占额外内存。
+    """
+    global _rec_engine
+    if _rec_engine is None:
+        _rec_engine = _create_ocr_engine(use_text_det=False,
+                                         text_score=REC_ONLY_TEXT_SCORE)
+    return _rec_engine
 
 
 # ================= 截图 + OCR =================
@@ -278,19 +349,47 @@ def today_str():
 
 
 def load_json(path, default):
-    """读 JSON:文件缺失/损坏都回退 default,不中断主流程"""
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else default
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return default
+    """读 JSON:文件缺失/损坏都回退 default,不中断主流程
+
+    但**不再静默**:主文件损坏时会打印告警,并尝试同目录的 <path>.bak
+    (save_json 采用"先备份再原子替换",所以崩溃后能从这里恢复)。
+    原实现在损坏时静默返回 {},而下次保存会把这份"空库"写回去,
+    等于把整个题库悄悄清空 —— 这是本函数存在的最大风险点。
+    """
+    for p in (path, path + ".bak"):
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except FileNotFoundError:
+            continue
+        except (json.JSONDecodeError, OSError) as e:
+            print(f"⚠️ 题库读取失败({p}): {type(e).__name__}: {e}")
+            continue
+        if isinstance(data, dict):
+            if p != path:
+                print(f"⚠️ 主文件不可用,已改用备份 {p} 的内容")
+            return data
+    return default
 
 
 def save_json(path, data):
-    """写 JSON:UTF-8 + 缩进,方便人工打开编辑补题"""
-    with open(path, "w", encoding="utf-8") as f:
+    """原子写入 JSON:UTF-8 + 缩进,方便人工打开编辑补题
+
+    流程:写 <path>.tmp 并 fsync → 备份旧文件到 <path>.bak → os.replace 原子替换。
+
+    为什么要这么麻烦:直接 open(path, "w") 会**立即截断**原文件,之后才逐块写入。
+    答题过程中每题都写一次库,一旦在这个瞬间被 Ctrl+C 或 GUI 的 taskkill 打断,
+    留下的就是半截 JSON —— 而读取侧会把它当成空库,下次保存即整库覆盖。
+    os.replace 在 Windows 上也是原子操作,不会出现"读到一个写了一半的文件"。
+    """
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    if os.path.exists(path):
+        shutil.copyfile(path, path + ".bak")   # 只保留一份备份,不累积
+    os.replace(tmp, path)
 
 
 def load_quiz_db():
@@ -325,56 +424,123 @@ def normalize_question(text):
 
 
 def lookup_in_db(db, question):
-    """查库:先精确匹配,再按相似度模糊匹配"""
+    """查库:先精确匹配,再按相似度模糊匹配
+
+    模糊匹配要求"最佳相似度达标"**且**"领先次优至少 DB_KEY_MARGIN" ——
+    题库里大量题目共享长前缀(如都以「下面哪位忍者的奥义…」开头),
+    只看最大值的话,一旦两道题面的相似度都越过 0.80 就会互相误命中,
+    从而点到另一道题的答案。宁可判定"未收录"(随机建库),也不要答错。
+    """
     key = normalize_question(question)
     if key in db:
         return key, db[key]
-    best_key, best_sim = None, 0.0
+    best_key, best_sim, second_sim = None, 0.0, 0.0
     for k in db:
+        # 长度差过大不可能相似,先跳过,省掉昂贵的 SequenceMatcher
+        if abs(len(k) - len(key)) > max(10, len(key) // 2):
+            continue
         s = text_similarity(key, k)
         if s > best_sim:
-            best_key, best_sim = k, s
-    if best_sim >= DB_KEY_SIM:
+            best_key, best_sim, second_sim = k, s, best_sim
+        elif s > second_sim:
+            second_sim = s
+    if best_sim >= DB_KEY_SIM and (best_sim - second_sim) >= DB_KEY_MARGIN:
         return best_key, db[best_key]
+    if best_sim >= DB_KEY_SIM:
+        print(f"   ⚠️ 查库出现两个相近题面(相似度 {best_sim:.2f} / {second_sim:.2f}),"
+              f"无法区分,按未收录处理")
     return None, None
 
 
-def record_to_db(question, answer, blind_idx=None, answer_known=True):
+def record_to_db(question, answer, blind_idx=None, answer_known=True,
+                 source=None):
     """题目答对,写入/更新 quiz_db.json
 
-    :param blind_idx: 正确答案所在行(0~3)。任何答对都记录,下次可复用位置,
-                      即使选项 OCR 漏检也能靠位置命中。
-    :param answer_known: answer 是否为真实答案文字(False=盲选占位,标 pending)
+    :param blind_idx: 正确答案所在行(0~3)
+    :param answer_known: answer 是否为**真实读到的选项文字**(False=盲选,文字未知)
+    :param source: 自定义来源标注(如"随机命中(游戏已确认)")
+    :return: 题库 key
+
+    answer 字段的写入规则(防止自动流程把人工积累的题库改花):
+      - 已有**可信答案**(非空且未标 pending)时,一律不覆盖,只更新统计与位置
+        —— 避免 OCR 抖动把正确选项读花成"山中凤"把好答案覆盖掉;
+      - 只要 answer 是真实读到的选项文字,就可以写库 —— 因为"正确率+1"是**游戏
+        给出的判定**,能确定这个选项就是正确答案。**随机命中同样可信**
+        (实测:佩恩·畜生道 / 轮回眼 / 12个 都是随机命中后被游戏确认的),
+        区别只体现在来源标注上;
+      - 只有盲选(选项文字根本没读到,answer 是"第N项"这类占位符)才不能写。
     """
     db = load_quiz_db()
     key = normalize_question(question)
     entry = db.setdefault(key, {"answer": "", "seen": 0, "correct": 0,
                                  "wrong": 0, "last": ""})
-    entry["answer"] = answer
-    entry["seen"] = int(entry.get("seen", 0)) + 1
-    entry["correct"] = int(entry.get("correct", 0)) + 1
-    entry["wrong"] = 0
-    entry["last"] = today_str()
+
+    old_answer = str(entry.get("answer") or "")
+    old_verified = bool(old_answer) and not entry.get("pending")
+
     if blind_idx is not None:
         entry["blind_idx"] = blind_idx
-    if answer_known:
+
+    if answer_known and not old_verified:
+        entry["answer"] = answer
         entry.pop("pending", None)
-        entry["source"] = entry.get("source", "自动答题答对")
+        entry["source"] = source or entry.get("source") or "自动答题答对"
         tag = f" [位置第{blind_idx + 1}行]" if blind_idx is not None else ""
         print(f"   ✅ 写入 quiz_db.json: [{key}] → 「{answer}」{tag}")
+    elif old_verified:
+        print(f"   ✅ 已收录「{key}」,答案保持「{old_answer}」不改写"
+              f"(本次仅更新统计)")
     else:
+        # 答案文字不可信:标记待人工确认,不写入 answer
+        # (原实现会把 "第2项" 这种位置占位符写进 answer 字段)
         entry["pending"] = True
         entry["source"] = "盲选答对(答案文字待人工确认)"
-        print(f"   ✅ 写入 quiz_db.json: [{key}] → 「{answer}」"
-              f" [盲选第{blind_idx + 1}行,待人工确认]")
+        print(f"   ✅ 写入 quiz_db.json: [{key}] [未写入答案,已标记待人工确认]")
+
+    entry["seen"] = int(entry.get("seen", 0)) + 1
+    entry["correct"] = int(entry.get("correct", 0)) + 1
+    entry["wrong"] = 0                      # 连续答错计数,答对即清零
+    entry["last"] = today_str()
     save_quiz_db(db)
     return key
 
 
-def record_to_unknown(question, options):
+def record_wrong_stats(question):
+    """答错时累计 quiz_db.json 的统计字段(seen / wrong)。
+
+    原实现答错只写 quiz_unknown.json,完全没碰 db 里的记录,导致:
+      - wrong 字段永远只在答对时被重置为 0,从未 +1;
+      - seen 只在答对时 +1,于是 seen 恒等于 correct。
+    这里只更新统计,不动 answer(答错不改变正确答案)。
     """
-    题目答错,写入/更新 quiz_unknown.json(含全部 4 个选项)
-    用于人工补答或后续手动修复题库。
+    db = load_quiz_db()
+    key = normalize_question(question)
+    entry = db.get(key)
+    if entry is None:
+        return                      # 题库没这道题,无需统计
+    entry["seen"] = int(entry.get("seen", 0)) + 1
+    entry["wrong"] = int(entry.get("wrong", 0)) + 1
+    # 库里已有"可信答案"却答错了 → 很可能是这个答案本身不对。
+    # 实测:「当角色等级达到多少的时候开启通灵兽系统」的答案「30级」来自
+    # "资料查证(火影常识/攻略)",真机被判错。全库 92 题里有 49 题是这个来源。
+    # 打 suspect 标记提示人工复核,但不自动删答案(正确率读取也可能出错,不能只凭一次判错就动库)。
+    if entry.get("answer") and not entry.get("pending"):
+        entry["suspect"] = True
+        print(f"   ⚠️ 题库答案「{entry['answer']}」被判为答错"
+              f"(累计 {entry['wrong']} 次) → 标记 suspect,建议人工复核")
+    save_quiz_db(db)
+
+
+def record_to_unknown(question, options, reason="答错"):
+    """
+    题目需要人工补答时,写入/更新 quiz_unknown.json(含全部 4 个选项)
+
+    两种触发:答错(reason="答错"),或"盲选答对但选项文字没读到"——
+    后者也必须把选项记下来,否则 quiz_db.json 里只会留下一个 answer 为空的
+    pending 条目,人工根本不知道有哪些选项,无从补答。
+
+    选项采用**合并去重**而不是整体覆盖:本次 OCR 可能只认出 3 个,
+    直接覆盖会把上一次更完整的选项列表冲掉。
     """
     data = load_unknown()
     key = normalize_question(question)
@@ -385,13 +551,31 @@ def record_to_unknown(question, options):
         "times": 0,
     })
     entry["question"] = question
-    entry["options"] = list(options)        # 全部 4 个选项
+    old_options = list(entry.get("options") or [])
+    entry["options"] = list(dict.fromkeys(list(options) + old_options))
     entry["first"] = entry.get("first") or today_str()
     entry["times"] = int(entry.get("times", 0)) + 1
     entry["last"] = today_str()
+    entry["reason"] = reason
     save_unknown(data)
-    print(f"   ❌ 写入 quiz_unknown.json: [{key}] → 选项: {options}")
+    mark = "❌" if reason == "答错" else "📥"
+    print(f"   {mark} 写入 quiz_unknown.json[{reason}]: [{key}] → 选项: {entry['options']}")
     return key
+
+
+def drop_unknown(question):
+    """题目答案已确认入库 → 从 quiz_unknown.json 移除,避免待补答清单无限堆积。
+
+    :return: True 表示确实删掉了一条
+    """
+    data = load_unknown()
+    key = normalize_question(question)
+    if key not in data:
+        return False
+    data.pop(key)
+    save_unknown(data)
+    print(f"   🧹 已从 quiz_unknown.json 移除「{key}」(答案已确认)")
+    return True
 
 
 # ================= 识别助手 =================
@@ -412,19 +596,143 @@ def _ocr_region_scaled(region, scale=1):
     return result
 
 
-def recognize_options():
-    """识别选项区域(放大提升小文字/单数字识别率),返回屏幕绝对坐标"""
-    return _ocr_region_scaled(OPTIONS_REGION, OPTION_SCALE)
+def option_row_band(idx, half=OPTION_ROW_HALF):
+    """第 idx 行选项(0~3)的裁剪带 (top, bottom):以该行中心为基准上下各取 half。
+
+    为什么不用"等分四行"的宽行带:识别模型会把输入图的高度归一化到 48px,
+    裁得越松、文字在图里的占比越小,归一化后越糊。实测同一个数字 "9":
+        行带高 38px → 读不出        行带高 30px → 置信 0.30
+        行带高 26px → 置信 0.36     行带高 22px → 置信 0.39
+    行间距约 50px,取 half=15(高 30px)能让文字基本占满高度,字号 22~26 时
+    上下仍有余量,不会切到文字。
+    """
+    cy = blind_option_center(idx)[1]
+    return cy - half, cy + half
 
 
-def recognize_question_and_options():
+# OCR 把数字读成形近字符的常见误读(仅用于"整串都像数字"的选项)
+# 注意:成员判断要用 _DIGIT_CONFUSION_MAP —— str.maketrans 返回的字典键是
+# 字符的整数序号,用 "x" in 那个表判断永远是 False(踩过)。
+_DIGIT_CONFUSION_MAP = {
+    "O": "0", "o": "0", "D": "0", "Q": "0", "C": "0", "c": "0",
+    "I": "1", "l": "1", "i": "1", "丨": "1", "|": "1",
+    "S": "5", "s": "5", "B": "8", "Z": "2", "z": "2", "g": "9", "q": "9",
+}
+_DIGIT_CONFUSION = str.maketrans(_DIGIT_CONFUSION_MAP)
+
+
+def normalize_option_digits(text):
+    """把形似数字的误读归一化(如 "1O"→"10"、"l5"→"15"、"2O"→"20")。
+
+    仅当整串都是"数字或已知易混字符"时才处理,所以「佐井」「山中风」这类
+    纯中文选项完全不受影响,不会把正常文字改坏。
+    """
+    if not text:
+        return text
+    if not all(ch.isdigit() or ch in _DIGIT_CONFUSION_MAP for ch in text):
+        return text
+    return text.translate(_DIGIT_CONFUSION)
+
+
+def _is_option_like(text):
+    """选项文字的宽松过滤:排除标题/按钮等噪声"""
+    if not text or text in ("提交", "下一题", "确认", "退出"):
+        return False
+    if not (1 <= len(text) <= 12):     # 选项文字 1-12 字
+        return False
+    return True
+
+
+def options_to_rows(items):
+    """把整区检测到的文本框按"就近归行"整理成 {行号: (文字, 中心, 置信度)}。
+
+    比原来"按 y 排序取前 4 个"更稳:噪声框不会把真正的选项挤掉,
+    同一行出现多个框时也只保留置信度最高的那个。
+    同时用"水平居中"这个已知几何特征把飘进区域的系统公告滤掉(见 OPTION_CENTER_X)。
+    """
+    fixed_y = [blind_option_center(i)[1] for i in range(4)]
+    rows = {}
+    for box, text, sc in items:
+        if sc < OPTION_MIN_CONFIDENCE:
+            continue
+        text = normalize_option_digits(text)
+        if not _is_option_like(text):
+            continue
+        cx, cy = box_center(box)
+        if abs(cx - OPTION_CENTER_X) > OPTION_X_TOLERANCE:
+            # 选项必定水平居中;偏离这么远的多半是滚动公告/提示条,不是选项
+            continue
+        idx = min(range(4), key=lambda i: abs(fixed_y[i] - cy))
+        if idx not in rows or sc > rows[idx][2]:
+            rows[idx] = (text, (cx, cy), sc)
+    return rows
+
+
+def recognize_option_row(idx):
+    """逐行"免检测"识别第 idx 个选项(整区检测漏掉该行时的补救)。
+
+    :return: (文字, 中心点, 置信度) 或 None
+    """
+    top, bot = option_row_band(idx)
+    region = (OPTIONS_REGION[0], top, OPTIONS_REGION[2], max(1, bot - top))
+    items = _ocr_region_scaled(region, OPTION_ROW_SCALE)
+    if not items:
+        return None
+    text = normalize_option_digits(
+        "".join(t for _b, t, _s in sorted(items, key=lambda it: box_center(it[0])[0])))
+    if not text:
+        return None
+    sc = min(s for _b, _t, s in items)
+    # 裁的是整行横带,所以中心点取该行固定中心(与盲选/排除法用的坐标一致)
+    return text, blind_option_center(idx), sc
+
+
+def recognize_options(probe=None):
+    """识别 4 个选项,返回 [(文字, 中心点, 置信度), ...](按行顺序,可能少于 4 个)。
+
+    两条路线配合:
+      1) 整区检测(带放大):能拿到每个文本框的精确位置,是主路径;
+      2) 逐行"免检测":只对第 1 步没检出的行启用,专治单数字/两位数整条漏检。
+
+    :param probe: 传入一个 list 时,把诊断明细追加进去(供 --quiz 查看)
+    """
+    rows = options_to_rows(recognize_options_raw(probe))
+    options = []
+    for idx in range(4):
+        hit = rows.get(idx)
+        if hit is None:
+            hit = recognize_option_row(idx)
+            if probe is not None:
+                probe.append(f"   第{idx + 1}行 整区未检出 → 逐行补漏: "
+                             f"{hit[0] if hit else '仍未识别'}")
+        elif probe is not None:
+            probe.append(f"   第{idx + 1}行 整区检出: 「{hit[0]}」 置信{hit[2]:.2f}")
+        if hit is not None:
+            options.append(hit)
+    return options
+
+
+def recognize_options_raw(probe=None):
+    """选项区域整区识别(放大),返回屏幕绝对坐标 —— 主路径的原始结果。"""
+    items = _ocr_region_scaled(OPTIONS_REGION, OPTION_SCALE)
+    if probe is not None:
+        for _box, text, sc in items:
+            probe.append(f"   [整区原始] 「{text}」 置信{sc:.2f}")
+    return items
+
+
+def recognize_question_and_options(probe=None):
     """识别当前题目 + 4 个选项
 
+    :param probe: 传入一个 list 时,把识别明细追加进去(供 --quiz 诊断用)
     :return: (题目文字 or None,
               [(选项文字, 中心点, 置信度), ...])  # 至多 4 个
     """
     # ---- 题目 ----
     q_items = recognize_screen(QUESTION_REGION)
+    if probe is not None:
+        for _box, text, sc in q_items:
+            probe.append(f"   [题目区原始] 「{text}」 置信{sc:.2f}")
     question_text = None
     best_score = 0.0
     for _box, text, sc in q_items:
@@ -439,20 +747,8 @@ def recognize_question_and_options():
             question_text = text
             best_score = sc
 
-    # ---- 选项(放大识别 + 降低置信度阈值,提升单数字/短短语识别) ----
-    o_items = recognize_options()
-    cands = []
-    for box, text, sc in o_items:
-        if sc < OPTION_MIN_CONFIDENCE:
-            continue
-        if text in ("提交", ""):
-            continue
-        if not (1 <= len(text) <= 12):  # 选项文字 1-12 字
-            continue
-        cx, cy = box_center(box)
-        cands.append((cy, cx, text, sc))
-    cands.sort()
-    options = [(t, (cx, cy), sc) for cy, cx, t, sc in cands[:4]]
+    # ---- 选项:整区检测为主,漏检的行再用"逐行免检测"补(见 recognize_options) ----
+    options = recognize_options(probe)
 
     return question_text, options
 
@@ -480,6 +776,9 @@ def read_accuracy():
     global _accuracy_debug_printed
     # 放大识别正确率区域(正确率文字较小,放大提升识别率)
     items = _ocr_region_scaled(ACCURACY_REGION, 2)
+    # OCR_TEXT_SCORE 调低后可能混入低分噪声,这里按分值再筛一道,
+    # 免得噪声把拼出来的「正确率 x/y」串扰坏。
+    items = [it for it in items if it[2] >= ACC_MIN_CONFIDENCE]
     row = "".join(t for _b, t, _s in sorted(items,
                                              key=lambda it: box_center(it[0])[0]))
     t = _normalize_digits(row)
@@ -525,25 +824,57 @@ def read_accuracy_stable(attempts=3):
     if not vals:
         return None
     # 取众数(按出现次数,其次按最后一次)
-    from collections import Counter
     cnt = Counter(vals)
     return cnt.most_common(1)[0][0]
 
 
+def read_accuracy_after_submit(correct_before, waits=(0.3, 0.6)):
+    """提交后读正确率,允许界面刷新延迟。
+
+    判定"答错"的依据是"正确数没有增加",而提交后界面需要时间刷新。
+    原实现只补读 1 次(等 0.3s),机器卡顿或游戏掉帧时会误判答错,
+    把本来答对的题写进 quiz_unknown.json。这里最多补读 len(waits) 次,
+    一旦看到正确数上涨立即返回。
+
+    :param correct_before: 提交前读数 (正确数, 总数) 或 None
+    :return: 最后一次读数 (正确数, 总数) 或 None
+    """
+    acc = read_accuracy()
+    for pause in waits:
+        if correct_before and acc and acc[0] > correct_before[0]:
+            break                       # 已确认答对,无需再读
+        time.sleep(pause)
+        nxt = read_accuracy()
+        if nxt is not None:
+            acc = nxt
+    return acc
+
+
 def find_matching_option(options, answer):
-    """在识别到的选项中找与题库答案最匹配的一项"""
-    best = None
-    for text, center, _sc in options:
-        sim = text_similarity(text, answer)
-        if best is None or sim > best[2]:
-            best = (text, center, sim)
-    if best and best[2] >= ANSWER_TEXT_SIM:
+    """在识别到的选项中找与题库答案最匹配的一项
+
+    同样要求"最佳相似度达标 + 领先次优 ANSWER_MARGIN"。
+    实测只有最大值的写法有误命中风险:'10' vs '10人' 相似度 0.80、
+    '山中风' vs '山中井野' 0.57(越过 0.65 阈值就会点错选项)。
+    宁可返回 None 走排除法/随机,也不要选中一个"看起来像"的错选项。
+    """
+    scored = [(text, center, text_similarity(text, answer))
+              for text, center, _sc in options]
+    if not scored:
+        return None
+    scored.sort(key=lambda x: x[2], reverse=True)
+    best = scored[0]
+    second_sim = scored[1][2] if len(scored) > 1 else 0.0
+    if best[2] >= ANSWER_TEXT_SIM and (best[2] - second_sim) >= ANSWER_MARGIN:
         return best
+    if best[2] >= ANSWER_TEXT_SIM:
+        print(f"   ⚠️ 选项匹配不唯一(「{best[0]}」{best[2]:.2f} vs "
+              f"「{scored[1][0]}」{second_sim:.2f}),放弃匹配改走排除法")
     return None
 
 
 # 盲选:选项区域横向中心 x(4 个选项纵向均分,取每行中心点)
-BLIND_OPT_X = OPTIONS_REGION[0] + OPTIONS_REGION[2] // 2   # ≈ 919
+BLIND_OPT_X = OPTION_CENTER_X                              # ≈ 919
 
 
 def blind_option_center(idx):
@@ -688,6 +1019,7 @@ def phase2_answer_one_question(q_no):
     chosen_text, chosen_center = None, None
     guess_row = None      # 本次实际点击的行号(0~3),答对后记录为 blind_idx
     matched_known = False  # 是否点选了题库已知答案(正确率读不到时用它兜底判定)
+    used_random = False    # 是否走了随机兜底(只影响写库时的来源标注)
 
     if blind:
         # 完全盲选:选项文字未识别,按估算坐标点第 blind_idx 个选项
@@ -722,12 +1054,14 @@ def phase2_answer_one_question(q_no):
         idx = random.randint(0, len(options) - 1)
         chosen_text, chosen_center, sc = options[idx]
         guess_row = option_row_index(chosen_center)
+        used_random = True          # 来源标注为"随机命中"(答对仍说明这个选项是对的)
         if known_answer:
             print(f"   ⚠️ 题库答案「{known_answer}」与选项不匹配,"
                   f"随机选 {idx + 1}: 「{chosen_text}」")
         else:
-            print(f"   🎲 题库未收录「{qkey}」,随机选 {idx + 1}: "
-                  f"「{chosen_text}」(用于建库)")
+            # qkey 为 None 时直接打印它只会看到「None」,这里回退到归一化题面
+            print(f"   🎲 题库未收录「{qkey or normalize_question(question)}」,"
+                  f"随机选 {idx + 1}: 「{chosen_text}」(用于建库)")
 
     # 2.5 点击选项 + 等游戏注册
     click_pos(chosen_center[0], chosen_center[1], duration=0.05)
@@ -737,12 +1071,10 @@ def phase2_answer_one_question(q_no):
     click_pos(SUBMIT_BTN_POS[0], SUBMIT_BTN_POS[1], duration=0.05)
     time.sleep(0.3)
 
-    # 2.7 读正确率(快速),提交后游戏已自动进入下一题
-    correct_after = read_accuracy()
-    if correct_after == correct_before:
-        # 可能没读到更新值,再补 1 次
-        time.sleep(0.3)
-        correct_after = read_accuracy()
+    # 2.7 读正确率(提交后游戏已自动进入下一题)。
+    # 界面刷新需要时间,单次读不到就判"答错"会把本来答对的题写进 unknown,
+    # 所以这里允许补读(见 read_accuracy_after_submit)。
+    correct_after = read_accuracy_after_submit(correct_before)
 
     # 2.8 判定对错
     is_correct = None
@@ -767,12 +1099,28 @@ def phase2_answer_one_question(q_no):
     # 2.9 写库
     option_texts = [t for t, _c, _s in options]
     if is_correct is True:
-        # 答对 → 记录答案文字 + 正确答案位置 blind_idx(跨轮复用)
-        record_to_db(question, chosen_text, blind_idx=guess_row,
-                     answer_known=(not blind))
+        # 答对 → 记录答案位置 blind_idx(跨轮复用,即使选项 OCR 漏检也能命中)
+        # 命中题库答案时写回题库里的原文(而不是 OCR 读出来的、可能带错字的版本)。
+        # 已有可信答案时不覆盖;只有盲选(文字没读到)才不写答案。
+        # 只要选项文字是**真实读到的**(而非盲选占位符),答案就可信 ——
+        # 「正确率+1」是游戏给出的判定。随机命中同样写库(实测:佩恩·畜生道 /
+        # 轮回眼 / 12个 都是随机命中后被游戏确认的),区别只体现在来源标注上;
+        # 以前把这类答案丢弃、转给人工补答,白白浪费了已经验证过的数据。
+        answer_to_store = known_answer if matched_known else chosen_text
+        record_to_db(question, answer_to_store, blind_idx=guess_row,
+                     answer_known=(not blind),
+                     source="随机命中(游戏已确认,文字可能含OCR误差)" if used_random else None)
+        if not blind:
+            drop_unknown(question)      # 答案文字已确认,从待补答清单移除
+        else:
+            # 盲选:选项文字根本没读到,库里只留下 blind_idx。
+            # 必须把选项一并写进待补答清单,否则库里只剩一个空答案的 pending 条目,
+            # 人工看不到选项,根本无从补答。
+            record_to_unknown(question, option_texts, reason="盲选,答案待确认")
     elif is_correct is False:
-        # 答错 → 写入 quiz_unknown.json (题目 + 全部 4 个选项)
+        # 答错 → 写入 quiz_unknown.json (题目 + 全部 4 个选项) 并累计错题统计
         record_to_unknown(question, option_texts)
+        record_wrong_stats(question)
     else:
         # 无法判定:保守写入 quiz_unknown.json 待人工确认
         print(f"   ⚠️ 无法判定对错,保守写入 quiz_unknown.json")
@@ -795,24 +1143,38 @@ def phase2_answer_round():
     print("=" * 60)
 
     finished = False
+    aborted = False
     try:
+        consec_unreadable = 0
         for q_no in range(1, MAX_QUESTIONS + 1):
             activate_game_window()
-            phase2_answer_one_question(q_no)
+            if phase2_answer_one_question(q_no):
+                consec_unreadable = 0
+            else:
+                # 识别不到题目说明当前界面已不是预期的答题界面,
+                # 此时再按固定坐标点「提交」会误触其它控件,所以连续失败即中止。
+                consec_unreadable += 1
+                print(f"   ⚠️ 第 {q_no} 题未识别到题目 "
+                      f"(连续失败 {consec_unreadable}/{MAX_CONSECUTIVE_UNREADABLE})")
+                if consec_unreadable >= MAX_CONSECUTIVE_UNREADABLE:
+                    print("   ❌ 连续多题无法识别,中止本轮 —— 不执行结算点击,请人工确认界面")
+                    aborted = True
+                    break
             # 点「提交」后游戏自动进入下一题,无需额外点击翻页
             time.sleep(POST_SUBMIT_WAIT)
 
-        # 10 题答完:点「领取奖励」按钮(固定坐标)
-        print(f"   🏁 点击「领取奖励」按钮 {CLAIM_BTN_POS} ...")
-        time.sleep(POST_SUBMIT_WAIT)
-        click_pos(CLAIM_BTN_POS[0], CLAIM_BTN_POS[1], duration=0.05)
-        time.sleep(1.0)
+        if not aborted:
+            # 10 题答完:点「领取奖励」按钮(固定坐标)
+            print(f"   🏁 点击「领取奖励」按钮 {CLAIM_BTN_POS} ...")
+            time.sleep(POST_SUBMIT_WAIT)
+            click_pos(CLAIM_BTN_POS[0], CLAIM_BTN_POS[1], duration=0.05)
+            time.sleep(1.0)
 
-        # 领取奖励后:点「退出」按钮(固定坐标)
-        print(f"   🚪 点击「退出」按钮 {EXIT_BTN_POS} ...")
-        time.sleep(1.0)
-        click_pos(EXIT_BTN_POS[0], EXIT_BTN_POS[1], duration=0.05)
-        finished = True
+            # 领取奖励后:点「退出」按钮(固定坐标)
+            print(f"   🚪 点击「退出」按钮 {EXIT_BTN_POS} ...")
+            time.sleep(1.0)
+            click_pos(EXIT_BTN_POS[0], EXIT_BTN_POS[1], duration=0.05)
+            finished = True
     except KeyboardInterrupt:
         print("\n🛑 手动中断 —— 已答题目已写回题库,重跑即可继续")
 
@@ -902,7 +1264,14 @@ def main():
 
     # 模式 A2: 只识别当前题目/选项(不点击,核对版面 + 漏检/排除法预览)
     if do_quiz_only:
-        q, options = recognize_question_and_options()
+        print(f"   引擎参数: text_score={OCR_TEXT_SCORE}(默认 0.5), "
+              f"选项放大×{OPTION_SCALE}, 选项置信度下限={OPTION_MIN_CONFIDENCE}")
+        probe = []
+        q, options = recognize_question_and_options(probe)
+        print("   ---- 原始识别明细(排查小数字/漏检用) ----")
+        for line in probe:
+            print(line)
+        print("   --------------------------------------")
         if not q:
             print("❌ 未识别到题目")
             return
@@ -966,9 +1335,6 @@ def main():
 
 
 if __name__ == "__main__":
-    try:
-        sys.stdout.reconfigure(encoding="utf-8")
-        sys.stderr.reconfigure(encoding="utf-8")
-    except Exception:
-        pass
+    ensure_utf8_stdout()
+    check_screen_size()
     main()

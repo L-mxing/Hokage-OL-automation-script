@@ -1,4 +1,18 @@
-keyboard==0.13.5
+# 运行时依赖：hokage_ol_gui.py 及其按顺序拉起的 6 个游戏脚本
+#
+# 关于 opencv-python：
+#   本项目不需要 cv2 的 GUI 能力（截图走 mss、取色走 mss.pixel、界面走 Tk），
+#   正式脚本里也没有任何 imshow/waitKey 调用（只有开发期的 test01.py 用过）。
+#   若想减小体积、避免 Qt 插件与 Tk 冲突，可换成 opencv-python-headless，
+#   但必须"先卸载再安装"——两个包会互相覆盖 site-packages/cv2：
+#       pip uninstall -y opencv-python
+#       pip install opencv-python-headless
+#   这里保持原样不动，是为了不破坏已经装好的虚拟环境。
+#
+# 关于 pillow：
+#   pyautogui 的依赖链本来就会间接引入 Pillow；这里显式列出，是因为
+#   拼图.py / 查看截图匹配分数.py 直接 import PIL。只跑主流程时用不到它。
+
 numpy==2.5.2
 opencv-python==5.0.0.93
 pillow==12.3.0

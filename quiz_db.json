@@ -115,11 +115,11 @@
   },
   "不需结印的究极医疗忍术是": {
     "answer": "百豪之术",
-    "seen": 1,
-    "correct": 1,
+    "seen": 2,
+    "correct": 2,
     "wrong": 0,
-    "last": "2026-09-07",
-    "blind_idx": 0,
+    "last": "2026-09-10",
+    "blind_idx": 3,
     "source": "自动答题答对"
   },
   "主角天赋中的各项天赋如何获得": {
@@ -264,11 +264,12 @@
   },
   "能使出牙通牙的忍者是": {
     "answer": "犬冢牙",
-    "seen": 0,
-    "correct": 0,
+    "seen": 2,
+    "correct": 2,
     "wrong": 0,
-    "last": "",
-    "source": "资料查证(火影常识/攻略)"
+    "last": "2026-09-11",
+    "source": "资料查证(火影常识/攻略)",
+    "blind_idx": 3
   },
   "谁不属于木叶三忍": {
     "answer": "佐助",
@@ -352,11 +353,12 @@
   },
   "鸣人的仙人模式可以维持多久": {
     "answer": "5分钟",
-    "seen": 0,
-    "correct": 0,
+    "seen": 1,
+    "correct": 1,
     "wrong": 0,
-    "last": "",
-    "source": "资料查证(火影常识/攻略)"
+    "last": "2026-09-10",
+    "source": "资料查证(火影常识/攻略)",
+    "blind_idx": 3
   },
   "鸣人小时候被叫做什么": {
     "answer": "吊车尾",
@@ -424,12 +426,12 @@
   },
   "装备的精炼等级上限是": {
     "answer": "10级",
-    "seen": 1,
-    "correct": 1,
+    "seen": 2,
+    "correct": 2,
     "wrong": 0,
-    "last": "2026-09-08",
+    "last": "2026-09-12",
     "source": "资料查证(火影常识/攻略)",
-    "blind_idx": 1
+    "blind_idx": 2
   },
   "夕日红的幻术是": {
     "answer": "魔幻树缚杀",
@@ -473,11 +475,12 @@
   },
   "佐助与宇智波鼬决战时使用一招从天而降的忍术是": {
     "answer": "麒麟",
-    "seen": 0,
-    "correct": 0,
+    "seen": 1,
+    "correct": 1,
     "wrong": 0,
-    "last": "",
-    "source": "资料查证(火影常识/攻略)"
+    "last": "2026-09-10",
+    "source": "资料查证(火影常识/攻略)",
+    "blind_idx": 2
   },
   "马基最擅长的忍法是": {
     "answer": "风之刃",
@@ -489,9 +492,9 @@
   },
   "当角色等级达到多少的时候开启通灵兽系统": {
     "answer": "30级",
-    "seen": 0,
+    "seen": 1,
     "correct": 0,
-    "wrong": 0,
+    "wrong": 1,
     "last": "",
     "source": "资料查证(火影常识/攻略)"
   },
@@ -589,11 +592,11 @@
   },
   "忍者变身一次效果持续多久": {
     "answer": "24小时",
-    "seen": 1,
-    "correct": 1,
+    "seen": 2,
+    "correct": 2,
     "wrong": 0,
-    "last": "2026-09-09",
-    "blind_idx": 1,
+    "last": "2026-09-12",
+    "blind_idx": 3,
     "source": "自动答题答对"
   },
   "治疗无法恢复生命值": {
@@ -607,11 +610,11 @@
   },
   "宇智波斑的弟弟叫什么": {
     "answer": "宇智波泉奈",
-    "seen": 1,
-    "correct": 1,
+    "seen": 2,
+    "correct": 2,
     "wrong": 0,
-    "last": "2026-09-09",
-    "blind_idx": 3,
+    "last": "2026-09-12",
+    "blind_idx": 0,
     "source": "自动答题答对"
   },
   "每次打劫成功获取多少点卷": {
@@ -659,11 +662,12 @@
   },
   "八尾的人柱力的哥哥是": {
     "answer": "雷影",
-    "seen": 0,
-    "correct": 0,
+    "seen": 1,
+    "correct": 1,
     "wrong": 0,
-    "last": "",
-    "source": "人工补答: 八尾人柱力奇拉比的哥哥=第四代雷影艾"
+    "last": "2026-09-11",
+    "source": "人工补答: 八尾人柱力奇拉比的哥哥=第四代雷影艾",
+    "blind_idx": 1
   },
   "奇拉比身上拥有几尾": {
     "answer": "八尾",
@@ -716,11 +720,12 @@
   },
   "雏田一直很喜欢谁": {
     "answer": "鸣人",
-    "seen": 0,
-    "correct": 0,
+    "seen": 1,
+    "correct": 1,
     "wrong": 0,
-    "last": "",
-    "source": "人工补答: 火影常识"
+    "last": "2026-09-10",
+    "source": "人工补答: 火影常识",
+    "blind_idx": 1
   },
   "小樱一般称呼井野为": {
     "answer": "井野猪",
@@ -751,11 +756,124 @@
   },
   "八门遁甲查克拉水代表什么": {
     "answer": "生命",
+    "seen": 2,
+    "correct": 2,
+    "wrong": 0,
+    "last": "2026-09-12",
+    "blind_idx": 1,
+    "source": "自动答题答对"
+  },
+  "能视觉共享的瞳术是": {
+    "answer": "",
     "seen": 1,
     "correct": 1,
     "wrong": 0,
-    "last": "2026-09-09",
+    "last": "2026-09-10",
+    "blind_idx": 2,
+    "pending": true,
+    "source": "兜底蒙对(答案待人工确认)"
+  },
+  "角色转职的角色槽如何开放": {
+    "answer": "",
+    "seen": 1,
+    "correct": 1,
+    "wrong": 0,
+    "last": "2026-09-10",
+    "blind_idx": 3,
+    "pending": true,
+    "source": "兜底蒙对(答案待人工确认)"
+  },
+  "橙色通灵兽修炼阵法包括未开放一共有多少个": {
+    "answer": "",
+    "seen": 1,
+    "correct": 1,
+    "wrong": 0,
+    "last": "2026-09-10",
+    "blind_idx": 0,
+    "pending": true,
+    "source": "兜底蒙对(答案待人工确认)"
+  },
+  "能召唤通灵兽地狱之犬的是谁": {
+    "answer": "",
+    "seen": 1,
+    "correct": 1,
+    "wrong": 0,
+    "last": "2026-09-10",
+    "blind_idx": 0,
+    "pending": true,
+    "source": "兜底蒙对(答案待人工确认)"
+  },
+  "生存演习最多可以选择多少个忍者来进行闯关": {
+    "answer": "",
+    "seen": 1,
+    "correct": 1,
+    "wrong": 0,
+    "last": "2026-09-10",
+    "blind_idx": 3,
+    "pending": true,
+    "source": "兜底蒙对(答案待人工确认)"
+  },
+  "招募界面的羁宝箱抽取消耗下面哪一样物品": {
+    "answer": "羁之卷",
+    "seen": 1,
+    "correct": 1,
+    "wrong": 0,
+    "last": "2026-09-10",
+    "blind_idx": 0,
+    "source": "随机命中(游戏已确认,文字可能含OCR误差)"
+  },
+  "战斗开始时能生成分身的忍者是谁": {
+    "answer": "再不斩",
+    "seen": 1,
+    "correct": 1,
+    "wrong": 0,
+    "last": "2026-09-11",
+    "blind_idx": 0,
+    "source": "随机命中(游戏已确认,文字可能含OCR误差)"
+  },
+  "忍者修行需要消耗什么": {
+    "answer": "修行符",
+    "seen": 1,
+    "correct": 1,
+    "wrong": 0,
+    "last": "2026-09-11",
     "blind_idx": 1,
-    "source": "自动答题答对"
+    "source": "随机命中(游戏已确认,文字可能含OCR误差)"
+  },
+  "能使出肉弹战车的是": {
+    "answer": "秋道丁次",
+    "seen": 1,
+    "correct": 1,
+    "wrong": 0,
+    "last": "2026-09-12",
+    "blind_idx": 3,
+    "source": "随机命中(游戏已确认,文字可能含OCR误差)"
+  },
+  "哪个不是三忍之一": {
+    "answer": "樟脑丸",
+    "seen": 1,
+    "correct": 1,
+    "wrong": 0,
+    "last": "2026-09-12",
+    "blind_idx": 1,
+    "source": "随机命中(游戏已确认,文字可能含OCR误差)"
+  },
+  "每个剧情副本地图上可拾取的宝箱最多有几个": {
+    "answer": "1",
+    "seen": 1,
+    "correct": 1,
+    "wrong": 0,
+    "last": "2026-09-12",
+    "blind_idx": 3,
+    "source": "随机命中(游戏已确认,文字可能含OCR误差)"
+  },
+  "卡卡西的万花筒写轮眼瞳术是": {
+    "answer": "神威",
+    "seen": 1,
+    "correct": 1,
+    "wrong": 0,
+    "last": "2026-09-12",
+    "blind_idx": 2,
+    "source": "随机命中(游戏已确认,文字可能含OCR误差)"
   }
 }

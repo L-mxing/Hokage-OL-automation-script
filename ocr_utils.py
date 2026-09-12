@@ -30,11 +30,30 @@ _engine = None                 # OCR 引擎单例(首次调用才加载模型,�
 _sct = mss.MSS()               # 截屏实例,复用
 
 
+def create_engine() -> RapidOCR:
+    """创建 OCR 引擎(模型只加载一次)
+
+    det_limit_type 默认是 "min"(把短边放大到 det_limit_side_len=736)。
+    对 502x72 这类宽而扁的屏幕区域,实际送检尺寸会膨胀到 5132x736,
+    实测单次识别 734ms;改为 "max"(长边不超过 736)后降到 6ms。
+
+    注意:rapidocr_onnxruntime 1.2.3 的 update_det_params 会无条件读取
+    det_dict['model_path'],只传 det_limit_* 会 KeyError,需补传
+    det_model_path=""。这里先按正常写法尝试,失败再补,便于将来升级。
+    """
+    options = {"det_limit_type": "max", "det_limit_side_len": 736}
+    try:
+        return RapidOCR(**options)
+    except KeyError:
+        options["det_model_path"] = ""
+        return RapidOCR(**options)
+
+
 def get_engine() -> RapidOCR:
     """惰性初始化 OCR 引擎(模型只加载一次)"""
     global _engine
     if _engine is None:
-        _engine = RapidOCR()
+        _engine = create_engine()
     return _engine
 
 
@@ -79,10 +98,16 @@ def ocr_text(source=None, region=None) -> list:
         source 为 ndarray       → 直接识别该图
         source 为 None          → 识别屏幕(可传 region 限定区域)
     返回 [(box, text, score), ...]
+
+    注意:source 为路径/数组时 region 无意义(它们不是屏幕截图),会被忽略并告警。
     """
     if isinstance(source, str):
+        if region:
+            print(f"⚠️ ocr_text: source 是图片文件,region={region} 被忽略")
         return ocr_file(source)
     if isinstance(source, np.ndarray):
+        if region:
+            print("⚠️ ocr_text: source 是图像数组,region 被忽略")
         return ocr_image(source)
     return ocr_screen(region)
 

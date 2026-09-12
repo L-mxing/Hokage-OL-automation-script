@@ -1,7 +1,7 @@
-import sys
 import time
 
-from screenshot_utils import click_pos, wait_and_click_image,wait_image
+from screenshot_utils import (click_pos, wait_and_click_image, wait_image,
+                              ensure_utf8_stdout, check_screen_size)
 
 # ================= 配置区域 =================
 
@@ -56,7 +56,6 @@ def do_battle_round(round_num):
     # 4. 查找'确认' 按钮
     confirm_btn = wait_image(IMG_CONFIRM, region=REGION_CONFIRM, confidence=0.8,timeout=60,
                         desc='战斗结束确认按钮')
-    print(confirm_btn)
     if confirm_btn:
         print("发现确认按钮")
         # 校验：中心应该接近 (958, 661)，允许 ±40px
@@ -92,4 +91,6 @@ def main():
 
 
 if __name__ == "__main__":
-        main()
+    ensure_utf8_stdout()
+    check_screen_size()
+    main()

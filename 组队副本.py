@@ -1,7 +1,7 @@
-import sys
 import time
 
-from screenshot_utils import click_pos, wait_and_click_image
+from screenshot_utils import (click_pos, wait_and_click_image,
+                              ensure_utf8_stdout, check_screen_size)
 
 # ================= 配置区域 =================
 
@@ -21,7 +21,7 @@ REGION_SETTLEMENT = (1155, 801, 165, 42)  # 游戏结算，返回游戏
 
 POS_JOIN = (1225, 688)  # 参与按钮坐标
 POS_DUNGEON_1 = (751, 445)  # 选择副本关卡
-POS_NO_PROMPT = (821, 603)
+POS_NO_PROMPT = (821, 603)# 不再提示
 POS_START_BATTLE = (888, 620)  # 开战按钮坐标
 POS_SETTLEMENT = (1235, 825)  # 返回游戏按钮
 POS_EXIT_DUNGEON = (1420,285) # 退出组队副本页面
@@ -55,14 +55,16 @@ def do_battle_round(round_num):
 
         time.sleep(1.5)
         print("参与副本")
-        click_pos(POS_JOIN[0],POS_JOIN[1])  # 参与组队副本
+        click_pos(*POS_JOIN)  # 参与组队副本
 
     # 2. 选择关卡
-    click_pos(POS_DUNGEON_1[0],POS_DUNGEON_1[1])
+    time.sleep(1)
+    click_pos(*POS_DUNGEON_1)
 
     # 3. 点击“确认进入”（按您的顺序：先 POS_NO_PROMPT，再确认按钮）
     if round_num == 1:
-        click_pos(POS_NO_PROMPT[0],POS_NO_PROMPT[1])  # 点击“不再提示”
+        time.sleep(1)
+        click_pos(*POS_NO_PROMPT)  # 点击“不再提示”
         time.sleep(0.5)
         confirm_enter = wait_and_click_image(IMG_CONFIRM_ENTER, region=REGION_CONFIRM_ENTER,
                                              desc='确认进入按钮')
@@ -77,13 +79,13 @@ def do_battle_round(round_num):
                                         desc='开战按钮')
     if not start_battle:
         print("未找到开战按钮，尝试点击固定坐标")
-        click_pos(POS_START_BATTLE[0],POS_START_BATTLE[1])
+        click_pos(*POS_START_BATTLE)
 
     # 5. 等待结算并返回
     settlement = wait_and_click_image(IMG_SETTLEMENT, region=REGION_SETTLEMENT, desc='结算标识')
     if not settlement:
         print("尝试点击结算坐标")
-        click_pos(POS_SETTLEMENT[0],POS_SETTLEMENT[1])
+        click_pos(*POS_SETTLEMENT)
 
     print(f"====== 第 {round_num} 轮完成 ======\n")
     return True
@@ -106,4 +108,6 @@ def main():
 
 
 if __name__ == "__main__":
-        main()
+    ensure_utf8_stdout()
+    check_screen_size()
+    main()

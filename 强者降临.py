@@ -1,7 +1,7 @@
-import sys
 import time
 
-from screenshot_utils import click_pos, wait_and_click_image
+from screenshot_utils import (click_pos, wait_and_click_image,
+                              ensure_utf8_stdout, check_screen_size)
 
 # ================= 配置区域 =================
 # 图片路径
@@ -42,11 +42,11 @@ def do_battle_round(round_num):
 
     entry = wait_and_click_image(IMG_ENTRY, region=REGION_ENTRY, desc="强者降临入口")
     if not entry:
-        print("❌ 未找到开始按钮，尝试重点击入口...")
+        print("❌ 未找到强者降临入口，尝试重新识别一次...")
         time.sleep(1)
-        entry = wait_and_click_image(IMG_ENTRY, region=REGION_ENTRY)
+        entry = wait_and_click_image(IMG_ENTRY, region=REGION_ENTRY, desc="强者降临入口")
         if not entry:
-            print("❌ 战斗启动失败，跳过本场")
+            print("❌ 找不到强者降临入口，跳过本轮")
             return False
 
     time.sleep(1)  # 等待界面切换
@@ -100,4 +100,6 @@ def main():
 
 
 if __name__ == "__main__":
-        main()
+    ensure_utf8_stdout()
+    check_screen_size()
+    main()
