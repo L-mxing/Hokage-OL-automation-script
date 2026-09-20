@@ -33,22 +33,40 @@
 # print(location)
 # # Box(left=np.int64(1149), top=np.int64(83), width=39, height=35)
 
+import os
+
 import mss
 import mss.tools
 
 
-def transform_pos(location):
-    x_1,y_1,x_2,y_2 = location
-    left=x_1
-    top=y_1
-    width=x_2-x_1
-    height=y_2-y_1
-    return {"left":left,"top":top,"width":width,"height":height}
+def transform_pos(x_1, y_1, x_2, y_2):
+    left = min(x_1, x_2)
+    top = min(y_1, y_2)
+    width = abs(x_2 - x_1)
+    height = abs(y_2 - y_1)
+    return {"left": left, "top": top, "width": width, "height": height}
 
-with mss.MSS() as sct:
-    region = transform_pos((920,226,1030,255))
-    shot = sct.grab(region)
-    mss.tools.to_png(shot.rgb,shot.size,output="SC_02_start_btn.png")
+
+def capture_region(x_1, y_1, x_2, y_2, output_path="screenshot.png"):
+    region = transform_pos(x_1, y_1, x_2, y_2)
+    if region["width"] <= 0 or region["height"] <= 0:
+        raise ValueError("截图区域宽度和高度必须大于 0。")
+
+    output_path = os.path.abspath(output_path)
+    output_dir = os.path.dirname(output_path)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+
+    with mss.MSS() as sct:
+        shot = sct.grab(region)
+        mss.tools.to_png(shot.rgb, shot.size, output=output_path)
+
+    return output_path
+
+
+if __name__ == "__main__":
+    save_path = capture_region(1200, 878, 1270, 949, "screenshots/SC_02_start_btn.png")
+    print(f"截图已保存到：{save_path}")
 
 
 

@@ -2,7 +2,7 @@
 #
 # 关于 opencv-python：
 #   本项目不需要 cv2 的 GUI 能力（截图走 mss、取色走 mss.pixel、界面走 Tk），
-#   正式脚本里也没有任何 imshow/waitKey 调用（只有开发期的 test01.py 用过）。
+#   正式脚本里也没有任何 imshow/waitKey 调用（只有开发期的 screenshot_ui.py 用过）。
 #   若想减小体积、避免 Qt 插件与 Tk 冲突，可换成 opencv-python-headless，
 #   但必须"先卸载再安装"——两个包会互相覆盖 site-packages/cv2：
 #       pip uninstall -y opencv-python

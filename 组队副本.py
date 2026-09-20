@@ -1,6 +1,6 @@
 import time
 
-from screenshot_utils import (click_pos, wait_and_click_image,
+from screenshot_utils import (auto_battle_with_speed, click_pos, wait_and_click_image,
                               ensure_utf8_stdout, check_screen_size)
 
 # ================= 配置区域 =================
@@ -11,11 +11,21 @@ IMG_CONFIRM_ENTER = 'image/ZD/ZD_02_confirm_enter.png'  # 确认进入
 IMG_START_BATTLE = 'image/ZD/ZD_03_start_battle.png'  # 开战按钮
 IMG_SETTLEMENT = 'image/ZD/ZD_04_settlement.png'  # 结算返回按钮
 
+# 战斗界面（自动战斗 / 倍速）图标
+# 用 *_tight 版：原图把按钮周围的战斗场景背景也框进去了，背景一变分数就被拖垮。
+# 对称内缩 8px/10px 后实测（真机帧，同状态/异状态）：自动战斗 0.995 / 0.260，
+# 倍速 0.963 / 0.713 —— 阈值两侧余量充足；且裁剪框中心 = 原中心，点击不会偏。
+IMG_AUTO_OFF = 'image/game_ui_snapshots/auto_disable.png'  # 自动战斗未开启（绿色“自动”）
+IMG_AUTO_ON = 'image/game_ui_snapshots/auto_enable.png'  # 自动战斗已开启（红色“取消”）
+IMG_SPEED_SLOW = 'image/game_ui_snapshots/tag_speed_1x.png'  # 倍速 x1（还没加速）
+IMG_SPEED_FAST = 'image/game_ui_snapshots/tag_speed_2x.png'  # 倍速 x2（目标档位）
+
 # 图像搜索范围
 REGION_DUNGEON_ENTRANCE = (20, 186, 200, 192)  # 组队副本入口
 REGION_CONFIRM_ENTER = (835, 543, 108, 40)  # “确认进入”按钮
 REGION_START_BATTLE = (840, 603, 103, 40)  # “开战”按钮
 REGION_SETTLEMENT = (1155, 801, 165, 42)  # 游戏结算，返回游戏
+REGION_BATTLE_UI = (1185, 860, 154, 100)  # 战斗界面图标区域（自动战斗 + 倍速）
 
 # 固定点击坐标
 
@@ -30,12 +40,19 @@ POS_EXIT_DUNGEON = (1420,285) # 退出组队副本页面
 # 循环次数
 ROUNDS = 5
 
+# 战斗界面（自动战斗 + 倍速）只需本进程确认一次：
+# 第一次检测确认"自动 + 倍速都已开启"后置 True，后续轮次直接跳过，不再轮询这两个按钮。
+# 三个脚本各自记一次（都是独立子进程，互不影响）。
+_battle_ui_ready = False
+
+
 def do_battle_round(round_num):
     """
     执行一次组队副本关卡
     :param round_num: 当前轮次
     :return: True 成功，False 失败
     """
+    global _battle_ui_ready
     print(f"\n====== 第 {round_num} 轮开始 ======")
 
     # 1. 点击“组队副本”入口（使用图像识别，点击图片中心）
@@ -80,6 +97,16 @@ def do_battle_round(round_num):
     if not start_battle:
         print("未找到开战按钮，尝试点击固定坐标")
         click_pos(*POS_START_BATTLE)
+
+    # 战斗开始：检测一次自动战斗与倍速。本进程确认过一次就不再重复检测这两个按钮。
+    time.sleep(1)  # 等战斗界面出现
+    if _battle_ui_ready:
+        print("自动战斗与倍速已在本进程确认开启，跳过重复检测")
+    else:
+        report = auto_battle_with_speed(IMG_AUTO_OFF, IMG_SPEED_SLOW, region=REGION_BATTLE_UI,
+                                        auto_on_image=IMG_AUTO_ON, speed_fast_image=IMG_SPEED_FAST,
+                                        desc=f"组队副本 第 {round_num} 轮")
+        _battle_ui_ready = report.ok
 
     # 5. 等待结算并返回
     settlement = wait_and_click_image(IMG_SETTLEMENT, region=REGION_SETTLEMENT, desc='结算标识')

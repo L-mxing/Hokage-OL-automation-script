@@ -4,8 +4,8 @@ from PIL import ImageGrab
 
 from screenshot_utils import _load_template
 
-TPL = 'image/PW/PW_02_confirm.png'
-REGION = (915, 649, 96, 26)
+TPL = 'image/game_ui_snapshots/auto_disable.png'
+REGION = (1185, 860, 154, 100)
 
 tpl = _load_template(TPL)
 print(f"模板尺寸: {tpl.shape[::-1]}")
