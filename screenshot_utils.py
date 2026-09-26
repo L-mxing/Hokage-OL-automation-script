@@ -1,6 +1,19 @@
 """
-图像识别与点击的公共工具模块
-Opencv + pyautogui 实现，供各脚本调用
+图像识别与点击的公共工具模块，供各脚本调用。
+依赖：opencv(cv2) 做模板匹配 + mss 截图 + numpy 存数组 + pyautogui 点击。
+
+—— 当前行为速览（想快速了解现状看这里；逐版变更史在下方）——
+· 匹配默认走**灰度**单通道；只在"颜色本身也是判据"时才传 color=True 走原图(BGR)匹配。
+  带该开关的是 locate_* / count_matches / wait_* / describe_matches 这一层；
+  战斗三件套（ensure_auto_battle / set_speed / auto_battle_with_speed）固定灰度。
+· 截图与通道转换只在 _capture() 一处发生（全模块仅此一处 _sct.grab / BGR2GRAY）。
+· 阈值分工：DEFAULT_CONFIDENCE(0.8) 通用；SPEED_STATE_CONFIDENCE(0.9) 判倍速档位；
+  AUTO_STATE_CONFIDENCE(0.55) 判自动战斗开关（探测时刻按钮半透明，分数天然偏低）。
+· 模板比搜索区域大 ⇒ 直接返回 None / (0, 0.0)，是"整块漏检"的头号嫌疑（回归有守卫）。
+· 诊断只写控制台（describe_matches / _print_miss_hint），运行期不落盘任何截图。
+· 回归脚本在 .workbuddy/ 下：verify_changes / verify_battle_toggle / verify_color_mode 等。
+
+版本变更史（v1、v2 未留档）：
 v3：mss 截图定位；轮询统一走 _poll 集中处理异常（连续失败即上抛，避免静默空等）；
     模板大于搜索区域时提前返回 None；locate_on_screen 可选返回匹配分数。
 v4：pyautogui.PAUSE 由默认 0.1s 压到 0.01s（每次点击原本白等 0.2s）；
@@ -28,8 +41,10 @@ v8：v7 的收窗口踩了自己的脚：把"点击后等状态变化"的窗口�
     QUICK_PROBE_TIMEOUT(0.6s) 只用于"图标在不在"，点击后的复核用
     CLICK_VERIFY_TIMEOUT(2.0s)（UI 动画/同步没那么快）。
 v9：真机截图定位到根因后收尾：模板必须"裁紧"（原图带战斗背景，同一状态换场景分数能
-    从 0.99 掉到 0.79 → 倍速切不上），三个脚本改用 *_tight.png；倍速"当前档位"的判定
-    阈值收紧到 SPEED_STATE_CONFIDENCE（x1/x2 模板互相关 0.86，0.8 会漏点）；
+    从 0.99 掉到 0.79 → 倍速切不上）——现今这四个模板（image/game_ui_snapshots/ 下的
+    auto_enable / auto_disable / tag_speed_1x / tag_speed_2x）本身就是裁紧版，
+    历史叫法里的 _tight 后缀已不再出现在文件名中；倍速"当前档位"的判定阈值收紧到
+    SPEED_STATE_CONFIDENCE（x1/x2 模板互相关 0.86，0.8 会漏点）；
     战斗界面 UI 会淡出导致后续场次探不到自动战斗按钮，新增 BattleState.REUSED
     + reset_battle_ui_memo()：沿用本进程内已确认的状态（倍速不沿用）。
 v10：不再往磁盘落任何调试截图（曾经的 dump_region_debug / dump_debug 参数 / imwrite_u
@@ -49,6 +64,20 @@ v12：未命中就地补打"最高分 @ 位置"（2026-09-17）。原来只有"�
 v13：新增 count_matches()（2026-09-22）：数同一个图标在区域里出现了几次。
     locate_on_screen / locate_many_on_screen 都只给"最佳的那一个位置"，数不了个数；
     八门遁甲需要数"背包还剩几个空格子"，就补了这个。纯新增，不改动任何既有函数。
+v14：新增可选的"原图（彩色）匹配"开关 color（2026-09-26）。默认仍是灰度，
+    既有调用、既有阈值、既有回归一律不受影响；color=True 时模板与画面都保留三通道
+    BGR 原图，不转灰度就直接交给 matchTemplate（OpenCV 对多通道逐通道求和后
+    仍返回单通道结果图，无 alpha 通道，故与 mss 的 BGRA[:, :, :3] 正好对上）。
+    真机素材实测：命中场景的峰值分与灰度完全一致（1.000/0.999）、峰值坐标一致；
+    代价是匹配耗时约 2.3~2.8 倍（转灰度的 0.02~0.06ms 省不回来）。
+    ⚠️ 彩色分与灰度分不是同一把尺子：同一画面压暗 -20 灰度 0.680 / 彩色 0.588，
+       去饱和 80% 灰度 1.000 / 彩色 0.859 ⇒ 开了 color 的场景必须重新标定 confidence，
+       不能照抄灰度阈值（尤其 AUTO_STATE_CONFIDENCE / SPEED_STATE_CONFIDENCE 这种紧线）。
+    ⚠️ _template_cache 的 key 已改为 (路径, 模式)：同一路径按两种模式加载出的数组
+       通道数不同，混用会让 matchTemplate 直接抛断言。
+    范围：只覆盖 locate_* / count_matches / wait_* / describe_matches 这一层；
+        战斗三件套（ensure_auto_battle / set_speed / auto_battle_with_speed）暂不含开关，
+        它们仍然是纯灰度（要开的话再说，改动也只是把 color 透传下去）。
 """
 from __future__ import annotations # python版本3.10以上可不写
 
@@ -84,16 +113,17 @@ __all__ = [
 ]
 
 # 默认参数（各脚本需要不同值时，在调用处传参覆盖）
-DEFAULT_CONFIDENCE = 0.8           # 匹配精度
-DEFAULT_TIMEOUT = 60               # 等待图片出现的最长时间（秒）
-DEFAULT_INTERVAL = 0.5             # 每次检查间隔
-DEFAULT_DURATION = 0.3             # 鼠标移动持续时间
+DEFAULT_CONFIDENCE = 0.8           # 相似度下限：TM_CCOEFF_NORMED 峰值（0~1）须 >= 它才算命中
+                                   # ⚠️ 这条线按灰度实测标定；color=True 时必须重新标定（见 v14）
+DEFAULT_TIMEOUT = 60               # wait_* 等图片出现的总窗口（秒）
+DEFAULT_INTERVAL = 0.5             # 轮询间隔（秒）；命中即返回，不会白等满窗口
+DEFAULT_DURATION = 0.3             # pyautogui.moveTo 移到目标所用的时间（秒）
 MAX_CONSECUTIVE_ERRORS = 5         # 轮询连续异常达到该次数即上抛（多为环境/代码问题）
 
 SHORT_PROBE_TIMEOUT = 2.0          # 幂等探测窗口：判断"图标此刻在不在"，不是"等它出现"
 QUICK_PROBE_TIMEOUT = 0.6          # 面板已确认出现后的探测窗口（图标要么在要么不在，别多等）
 CLICK_VERIFY_TIMEOUT = 2.0         # 点击后等"状态真的变了"的窗口（UI 动画/同步没这么快！）
-CLICK_SETTLE_DELAY = 0.3           # 两次点击之间的界面响应间隔
+CLICK_SETTLE_DELAY = 0.3           # 点完自动战斗、接着要点倍速时的等待（让界面先响应）
 BATTLE_UI_READY_TIMEOUT = 6.0      # 战斗开始后等"战斗界面图标出现"的总窗口（秒）
 
 # 判定"倍速当前是几倍"要用的严格阈值。x1/x2 两个模板灰度互相关高达 0.86
@@ -121,13 +151,24 @@ AUTO_STATE_CONFIDENCE = 0.55
 PYAUTOGUI_PAUSE = 0.01
 pyautogui.PAUSE = PYAUTOGUI_PAUSE
 
-_template_cache: dict[str, tuple[np.ndarray, float]] = {}
-_sct = mss.MSS()                   # mss 全局实例，复用避免反复初始化开销
+# 模板缓存：key = (路径, 模式)，value = (图像, 文件 mtime)。模式必须并进 key ——
+# 灰度与 BGR 两种模式加载出的数组通道数不同，混用会让 matchTemplate 直接抛断言。
+_template_cache: dict[tuple[str, bool], tuple[np.ndarray, float]] = {}
+# mss 全局单例，复用避免反复初始化开销。
+# ⚠️ 回归测试会整体替换这个模块级变量来"喂"真机帧（见 .workbuddy/verify_color_mode.py
+# 的 FakeSct），所以别把它挪进别的函数、也别改成一经创建就只读。
+_sct = mss.MSS()
 
 
 @dataclass
 class MatchResult:
-    """图像匹配结果：屏幕外接矩形 + 匹配分数"""
+    """图像匹配结果：模板在**屏幕**上的外接矩形 + 匹配分数。
+
+    ⚠️ left / top 是屏幕绝对坐标（region 给定时已叠加其左上角偏移），不是区域内相对坐标。
+    ⚠️ 它由 locate_on_screen(return_score=True) 与 locate_many_on_screen 返回，但**不在
+      模块 __all__ 里**：`from screenshot_utils import *` 拿不到它，需要显式导入
+      `from screenshot_utils import MatchResult`。
+    """
     left: int
     top: int
     width: int
@@ -136,33 +177,68 @@ class MatchResult:
 
     @property
     def center(self) -> tuple[int, int]:
-        """矩形中心坐标（用于点击）"""
+        """矩形中心坐标（屏幕绝对坐标，直接用于 click_pos）"""
         return (self.left + self.width // 2, self.top + self.height // 2)
 
 
-def _load_template(image_path: str) -> np.ndarray:
+def _load_template(image_path: str, color: bool = False) -> np.ndarray:
     """
-    读取模板并转灰度（带缓存 + mtime 校验）；np.fromfile + imdecode 兼容中文路径
+    读取模板（带缓存 + mtime 校验）；np.fromfile + imdecode 兼容中文路径
     开发期替换模板 PNG 后会自动重新加载，无需重启脚本。
     :param image_path: 模板图片路径
-    :return: 灰度模板图像
+    :param color: False（默认）读成灰度单通道；True 读成三通道 BGR 原图。
+        ⚠️ 缓存 key 必须带上这一位：同一路径按两种模式加载出的数组通道数不同，
+        混用会让 cv2.matchTemplate 直接抛断言（通道数不匹配），所以 key 是 (路径, 模式)。
+    :return: 灰度模板（2 维）或 BGR 模板（3 维）图像
+    :raises FileNotFoundError: 文件不存在或图片解码失败。_poll 依赖这个异常类型
+        "立即上抛、不空等"，改动异常类型会连带影响轮询的失败策略
     """
 
+    flag = cv2.IMREAD_COLOR if color else cv2.IMREAD_GRAYSCALE
     mtime = os.path.getmtime(image_path)# 系统调用变局部变量更省
-    if image_path not in _template_cache or \
-            mtime != _template_cache[image_path][1]:
+    key = (image_path, color)
+    if key not in _template_cache or \
+            mtime != _template_cache[key][1]:
         # 用 != 比 > 更严谨
         data = np.fromfile(image_path, dtype=np.uint8)
-        template = cv2.imdecode(data, cv2.IMREAD_GRAYSCALE)
+        template = cv2.imdecode(data, flag)
         if template is None:
             raise FileNotFoundError(f"模板图片加载失败: {image_path}")
-        _template_cache[image_path] = (template, mtime)
-    return _template_cache[image_path][0]
+        _template_cache[key] = (template, mtime)
+    return _template_cache[key][0]
+
+
+def _capture(region: tuple[int, int, int, int] | None, color: bool
+             ) -> tuple[np.ndarray, int, int]:
+    """截取搜索区域并整理成"可以直接喂 matchTemplate"的画面。
+
+    灰度与彩色两条链路的唯一差别就在这个函数里，三种 locate/count 共用它，
+    省得每处各写一遍（也避免漏改其中一处导致通道数对不上）。
+
+    :param region: 搜索区域 (left, top, width, height)，None = 主显示器全屏
+    :param color: False（默认）转灰度单通道（沿用原有链路）；True 保留三通道 BGR 窗口原图，
+        不转灰度，直接做原图（彩色）匹配
+    :return: (frame, offset_x, offset_y)，offset 是区域左上角在屏幕上的坐标
+    """
+    offset_x = offset_y = 0
+    if region:
+        left, top, width, height = region
+        offset_x, offset_y = left, top
+        mon = {"left": left, "top": top, "width": width, "height": height}
+    else:
+        mon = _sct.monitors[1]     # 主显示器
+
+    # mss 输出 BGRA，截掉 alpha；不转灰度时它本身就是三通道 BGR 原图
+    frame = np.array(_sct.grab(mon))[:, :, :3]
+    if not color:
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    return frame, offset_x, offset_y
 
 
 def locate_on_screen(image_path: str, region: tuple[int, int, int, int] | None = None,
                      confidence: float = DEFAULT_CONFIDENCE,
-                     return_score: bool = False
+                     return_score: bool = False,
+                     color: bool = False
                      ) -> tuple[int, int, int, int] | MatchResult | None:
     """
     mss 截图 + OpenCV 匹配
@@ -170,26 +246,27 @@ def locate_on_screen(image_path: str, region: tuple[int, int, int, int] | None =
     :param region: 搜索区域 (left, top, width, height)
     :param confidence: 匹配精度
     :param return_score: True 时返回 MatchResult（含匹配分数），否则返回坐标元组
-    :return: (left, top, width, height) 或 MatchResult；未找到返回 None
+    :param color: False（默认）灰度匹配；True 用三通道原图（彩色）匹配。
+        ⚠️ 开了它之后 confidence 要重新标定：实测同一画面压暗/去饱和时彩色分会比
+        灰度分低 0.06~0.14，照抄灰度阈值会漏检（详见模块头 v14 说明）
+    :return: (left, top, width, height) 或 MatchResult；未找到返回 None。
+        left/top 是**屏幕绝对坐标**（region 给定时已叠加其左上角偏移）
+    :raises FileNotFoundError: 模板文件缺失/解码失败（由 _load_template 抛出）
     """
-    template = _load_template(image_path)
+    template = _load_template(image_path, color=color)
     th, tw = template.shape[:2]
 
-    offset_x = offset_y = 0
-    if region:
-        left, top, width, height = region
-        offset_x, offset_y = left, top
-        if tw > width or th > height:
-            return None
-        mon = {"left": left, "top": top, "width": width, "height": height}
-    else:
-        mon = _sct.monitors[1]     # 主显示器
+    # 尺寸护栏之一：region 显式给定时先按"声明尺寸"判断，不合格直接返回、连截图都省掉。
+    # 这是最常见的"整块漏检"成因 —— 区域比模板还小（回归里对每个模板都有守卫）。
+    if region and (tw > region[2] or th > region[3]):
+        return None
 
-    # mss 输出 BGRA，截掉 alpha 转灰度
-    frame = cv2.cvtColor(np.array(_sct.grab(mon))[:, :, :3], cv2.COLOR_BGR2GRAY)
+    frame, offset_x, offset_y = _capture(region, color)
     fh, fw = frame.shape[:2]
+    # 尺寸护栏之二：region=None（全屏）时上面那条不生效，这里按"真实帧尺寸"再兜一次，
+    # 避免把过大的模板喂给 cv2 触发断言
     if th > fh or tw > fw:
-        return None                # 模板比截图区域还大，无法匹配（避免 cv2 抛错）
+        return None
 
     result = cv2.matchTemplate(frame, template, cv2.TM_CCOEFF_NORMED)
     _, max_val, _, max_loc = cv2.minMaxLoc(result)
@@ -205,7 +282,8 @@ def locate_on_screen(image_path: str, region: tuple[int, int, int, int] | None =
 
 def locate_many_on_screen(image_paths, region: tuple[int, int, int, int] | None = None,
                           confidence: float = DEFAULT_CONFIDENCE,
-                          want_best: bool = False
+                          want_best: bool = False,
+                          color: bool = False
                           ) -> dict[str, MatchResult | None]:
     """一次截屏同时匹配多个模板，返回 {模板路径: MatchResult | None}。
 
@@ -218,20 +296,16 @@ def locate_many_on_screen(image_paths, region: tuple[int, int, int, int] | None 
     :param confidence: 匹配精度
     :param want_best: True 时即使没过阈值也返回"最佳匹配"（含真实分数与位置），
         用于诊断"图标到底不在区域里，还是模板对不上"；此时只有模板大于区域才是 None
-    :return: 与入参一一对应的字典；未命中或模板大于截图区域时为 None
+    :param color: False（默认）灰度匹配；True 用三通道原图（彩色）匹配（阈值需重标，
+        见模块头 v14）
+    :return: 每个**去重后**的模板路径一个键（入参有重复时，键数会少于入参个数）；
+        未命中、或模板大于截图区域时该键的值为 None
+    :raises FileNotFoundError: 任一模板文件缺失/解码失败（由 _load_template 抛出）
     """
     paths = list(dict.fromkeys(image_paths))          # 去重且保持顺序
-    templates = {p: _load_template(p) for p in paths}
+    templates = {p: _load_template(p, color=color) for p in paths}
 
-    offset_x = offset_y = 0
-    if region:
-        left, top, width, height = region
-        offset_x, offset_y = left, top
-        mon = {"left": left, "top": top, "width": width, "height": height}
-    else:
-        mon = _sct.monitors[1]
-
-    frame = cv2.cvtColor(np.array(_sct.grab(mon))[:, :, :3], cv2.COLOR_BGR2GRAY)
+    frame, offset_x, offset_y = _capture(region, color)
     fh, fw = frame.shape[:2]
 
     found: dict[str, MatchResult | None] = {}
@@ -253,7 +327,8 @@ def locate_many_on_screen(image_paths, region: tuple[int, int, int, int] | None 
 
 def count_matches(image_path: str, region: tuple[int, int, int, int] | None = None,
                   confidence: float = DEFAULT_CONFIDENCE,
-                  min_distance: int = 20) -> tuple[int, float]:
+                  min_distance: int = 20,
+                  color: bool = False) -> tuple[int, float]:
     """数同一个模板在区域里出现了几次，返回 (个数, 区域内最高分)。
 
     locate_on_screen 只给"最佳的那一个位置"、locate_many_on_screen 也是每个模板一个，
@@ -267,22 +342,20 @@ def count_matches(image_path: str, region: tuple[int, int, int, int] | None = No
     :param region: 搜索区域 (left, top, width, height)，None = 全屏
     :param confidence: 命中阈值
     :param min_distance: 去重半径（像素）
+    :param color: False（默认）灰度匹配；True 用三通道原图（彩色）匹配（阈值需重标，
+        见模块头 v14）。注：图标挨得近、存在"并列最高分"时，两种模式可能挑中不同的
+        那一个（实测空格子未满帧灰度峰值在 x=98、彩色在 x=3，都是合法空格子），
+        个数不受影响，但"取某一个具体格子"的逻辑要留意
     :return: (命中个数, 区域内最高分)；模板比区域大时返回 (0, 0.0)
     """
-    template = _load_template(image_path)
+    template = _load_template(image_path, color=color)
     th, tw = template.shape[:2]
 
-    offset_x = offset_y = 0
-    if region:
-        left, top, width, height = region
-        offset_x, offset_y = left, top
-        if tw > width or th > height:
-            return 0, 0.0
-        mon = {"left": left, "top": top, "width": width, "height": height}
-    else:
-        mon = _sct.monitors[1]
+    # 模板比搜索区域还大时提前返回（放在截图之前，省一次没用的 grab）
+    if region and (tw > region[2] or th > region[3]):
+        return 0, 0.0
 
-    frame = cv2.cvtColor(np.array(_sct.grab(mon))[:, :, :3], cv2.COLOR_BGR2GRAY)
+    frame, offset_x, offset_y = _capture(region, color)
     if th > frame.shape[0] or tw > frame.shape[1]:
         return 0, 0.0
 
@@ -298,25 +371,32 @@ def count_matches(image_path: str, region: tuple[int, int, int, int] | None = No
 
 
 def describe_matches(image_paths, region: tuple[int, int, int, int] | None = None,
-                     confidence: float | dict[str, float] = DEFAULT_CONFIDENCE) -> str:
-    """诊断用：把几个模板的"最高分 @ 中心坐标"拼成一行，看图标到底去哪了。
+                     confidence: float | dict[str, float] = DEFAULT_CONFIDENCE,
+                     color: bool = False) -> str:
+    """诊断用：把每个模板的"最高分 @ 中心坐标"拼成一行字符串，用来判断图标到底怎么了。
 
     判读方法：
     - 分数很低（< 0.5）→ 图标根本不在这块区域（位置不对 / 面板没显示 / 被遮挡）
     - 分数贴着阈值（0.7~0.8）→ 图标就在这，只是模板与真实画面有差（重截模板或调阈值）
     - 模板大于区域 → 会直接说明，这种是整块漏检
+    - 诊断自身的异常不影响业务：调用方（_print_miss_hint / _report）都已包 try/except
 
+    :param image_paths: 模板路径列表（内部会去重，保序）
+    :param region: 搜索区域 (left, top, width, height)，None = 全屏
     :param confidence: 判定阈值。可以传 float（所有模板共用，旧行为），也可以传
         `{模板路径: 阈值}`——战斗界面上自动战斗与倍速用的阈值本来就不一样
         （见 AUTO_STATE_CONFIDENCE / SPEED_STATE_CONFIDENCE），传映射时 ✓ 才与
         真实判定一致。
+    :param color: False（默认）灰度；True 原图（彩色）。**必须与实际匹配时用的模式一致**，
+        否则诊断出来的分数与真实判定对不上（同画面彩色分会比灰度低 0.06~0.14，v14 实测）
+    :return: 形如 `a.png: 0.910✓@(1219,896) | b.png: 0.420@(1215,905)` 的一行字符串
     """
     per_path = confidence if isinstance(confidence, dict) else None
     # want_best=True 时阈值不参与筛选，但 locate_many_on_screen 会先做 `>= confidence`
     # 比较，所以传映射时必须换成一个 float，否则 dict 比较直接抛 TypeError。
     best = locate_many_on_screen(image_paths, region=region,
                                  confidence=DEFAULT_CONFIDENCE if per_path else confidence,
-                                 want_best=True)
+                                 want_best=True, color=color)
     parts = []
     for path, match in best.items():
         name = os.path.basename(path)
@@ -366,26 +446,32 @@ def reset_battle_ui_memo() -> None:
 
 def click_pos(x: int, y: int, duration: float = DEFAULT_DURATION) -> None:
     """
-    安全点击坐标
-    :param x: 模版图像 x 坐标
-    :param y: 模版图像 y 坐标
-    :param duration: 鼠标移动持续时间
+    把鼠标移到 (x, y) 并左键单击（moveTo + click，无重试、无返回值）。
+
+    :param x: 屏幕绝对 x 坐标（不是模板图内部的局部坐标）
+    :param y: 屏幕绝对 y 坐标
+    :param duration: 鼠标移到目标所用的时间（秒）；调用处传 0.05 可提速
     """
     pyautogui.moveTo(x, y, duration=duration)
     pyautogui.click()
 
 
-def _poll(image_path: str, region, confidence: float, timeout: float, interval: float):
+def _poll(image_path: str, region, confidence: float, timeout: float, interval: float,
+          color: bool = False):
     """
     轮询定位模板，返回坐标元组或 None；集中处理异常策略：
     - 模板缺失（FileNotFoundError）：立即上抛，别空等
     - 其他异常：打印首次详情，连续出现 MAX_CONSECUTIVE_ERRORS 次才上抛
+
+    :param color: 透传给 locate_on_screen —— False（默认）灰度，True 原图（彩色）
+    :return: 命中则返回 (left, top, width, height)（屏幕坐标），超时返回 None
     """
     start_time = time.time()
     errors = 0
     while time.time() - start_time < timeout:
         try:
-            loc = locate_on_screen(image_path, region=region, confidence=confidence)
+            loc = locate_on_screen(image_path, region=region, confidence=confidence,
+                                   color=color)
             if loc:
                 return loc
             errors = 0             # 恢复成功后清零计数
@@ -404,18 +490,26 @@ def _poll(image_path: str, region, confidence: float, timeout: float, interval: 
 def wait_any_image(image_paths, region: tuple[int, int, int, int] | None = None,
                    confidence: float = DEFAULT_CONFIDENCE,
                    timeout: float = DEFAULT_TIMEOUT,
-                   interval: float = DEFAULT_INTERVAL) -> str | None:
+                   interval: float = DEFAULT_INTERVAL,
+                   color: bool = False) -> str | None:
     """轮询直到列表里任意一个模板出现，返回命中的模板路径；超时返回 None。
 
     用途是"等界面出现"：战斗界面上的图标有好几个（自动战斗开/关、x1/x2），
-    不管先出现哪一个都说明面板已经起来了，这里一次截屏全部匹配，命中即返回。
+    任意一个命中都说明面板已经起来了，所以这里一次截屏全部匹配、命中即返回。
+    ⚠️ 多个同时命中时，返回的是**入参顺序里靠前的**那个（按去重后的列表顺序），
+       既不是"屏幕上先出现的"，也不是分最高的那个（已实测：调换入参顺序返回值随之改变）。
     异常处理策略与 _poll 一致（模板缺失立即上抛，连续异常到阈值上抛）。
+
+    :param color: False（默认）灰度匹配；True 用三通道原图（彩色）匹配（阈值需重标，v14）
+    :return: 命中的模板路径；超时返回 None
+    :raises FileNotFoundError: 任一模板文件缺失/解码失败
     """
     start_time = time.time()
     errors = 0
     while time.time() - start_time < timeout:
         try:
-            found = locate_many_on_screen(image_paths, region=region, confidence=confidence)
+            found = locate_many_on_screen(image_paths, region=region, confidence=confidence,
+                                          color=color)
             for path, match in found.items():
                 if match is not None:
                     return path
@@ -435,9 +529,10 @@ def wait_any_image(image_paths, region: tuple[int, int, int, int] | None = None,
 def wait_and_click_image(image_path: str, region=None, confidence: float = DEFAULT_CONFIDENCE,
                          timeout: float = DEFAULT_TIMEOUT, desc: str = "",
                          interval: float = DEFAULT_INTERVAL,
-                         duration: float = DEFAULT_DURATION) -> bool:
-    """
-    等待图片出现并点击其中心（或偏移位置）
+                         duration: float = DEFAULT_DURATION,
+                         color: bool = False) -> bool:
+    """轮询等待图片出现，命中后点击其中心（点击点固定为模板中心，不支持偏移）。
+
     :param image_path: 模板图片路径
     :param region: 搜索区域 (left, top, width, height)
     :param confidence: 匹配精度
@@ -445,9 +540,13 @@ def wait_and_click_image(image_path: str, region=None, confidence: float = DEFAU
     :param desc: 描述文字（用于日志）
     :param interval: 每次搜索间隔秒数
     :param duration: 鼠标移动时间；调用处可传 0.05 提速
+    :param color: False（默认，保持原有行为）灰度匹配；True 用三通道原图（彩色）匹配。
+        ⚠️ 彩色分与灰度分不是同一把尺子，开了它要重新标定 confidence（v14 实测：
+        压暗场景低 0.09、去饱和 80% 低 0.14）
     :return: True 点击成功，False 超时未找到
+    :raises FileNotFoundError: 模板文件缺失/解码失败（由 _poll 上抛）
     """
-    loc = _poll(image_path, region, confidence, timeout, interval)
+    loc = _poll(image_path, region, confidence, timeout, interval, color=color)
     if not loc:
         print(f"⚠️ 超时未找到 {desc} 图片: {image_path}")
         return False
@@ -459,7 +558,7 @@ def wait_and_click_image(image_path: str, region=None, confidence: float = DEFAU
 
 def wait_image(image_path: str, region=None, confidence: float = DEFAULT_CONFIDENCE,
                timeout: float = DEFAULT_TIMEOUT, interval: float = DEFAULT_INTERVAL,
-               desc: str = "") -> tuple[int, int] | None:
+               desc: str = "", color: bool = False) -> tuple[int, int] | None:
     """
     检测图片是否出现，不点击。返回中心坐标或 None
     :param image_path: 模板图片路径
@@ -468,9 +567,13 @@ def wait_image(image_path: str, region=None, confidence: float = DEFAULT_CONFIDE
     :param timeout: 超时秒数
     :param desc: 描述文字（用于日志）
     :param interval: 每次搜索间隔秒数
-    :return: 图片中心坐标 (cx, cy)；超时返回 None
+    :param color: False（默认，保持原有行为）灰度匹配；True 用三通道原图（彩色）匹配。
+        ⚠️ 彩色分与灰度分不是同一把尺子，开了它要重新标定 confidence（v14 实测：
+        压暗场景低 0.09、去饱和 80% 低 0.14）
+    :return: 图片中心坐标 (cx, cy)，屏幕绝对坐标；超时返回 None
+    :raises FileNotFoundError: 模板文件缺失/解码失败（由 _poll 上抛）
     """
-    loc = _poll(image_path, region, confidence, timeout, interval)
+    loc = _poll(image_path, region, confidence, timeout, interval, color=color)
     if not loc:
         print(f"⚠️ 超时未出现 {desc} 图片: {image_path}")
         return None
@@ -613,13 +716,17 @@ def ensure_auto_battle(image_path_1: str,
     :param region: 搜索区域 (left, top, width, height)
     :param on_image_path: 可选，"已开启态"的图标模板。传了它才能区分
         "本来就开着"和"界面不在这"；不传则两种情况都归为 UNKNOWN
+    :param confidence: 判定阈值，探测与点击后复核都用它。战斗入口传的是
+        AUTO_STATE_CONFIDENCE(0.55)，比通用 0.8 松（探测时刻按钮半透明，见常量处实测）
     :param probe_timeout: 探测窗口（秒）。这里问的是"图标现在在不在"，
         必须用短超时；传 DEFAULT_TIMEOUT(60) 会在已开启时空等一分钟
     :param verify_timeout: 点击后等"状态真的变了"的窗口。**别用 probe_timeout 顶替**：
         真机上点完一帧内按钮还没切过来，0.6s 的窗口会天天误报复核失败
     :param diagnose_miss: 某一步没探到时，补打一行该模板的最高分 @ 位置（多截一帧）。
         真机调阈值时需要它，默认关（auto_battle_with_speed 会打开）
-    :return: BattleState 三态，见类文档
+    :return: 本函数只可能返回三种：ALREADY_ENABLED（本来就开着）/ ENABLED（本次点开，
+        传了 on_image_path 时还复核过）/ UNKNOWN（两种图标都没探到）。
+        REUSED 不在这里产生，它是 auto_battle_with_speed 在外层按"沿用记忆"判定的
     """
     # 1) 给了"已开启态"模板就先看它：命中即无需任何动作，幂等的最优路径
     if on_image_path:
@@ -646,9 +753,9 @@ def ensure_auto_battle(image_path_1: str,
                   "要区分请传 on_image_path")
         return BattleState.UNKNOWN
 
-    # 复用刚定位到的中心点点击，省掉一次"重新截图 + 重新匹配"
-    # （若该面板有滑入动画、坐标会漂，则退化为
-    #   wait_and_click_image(image_path_1, region=region, timeout=probe_timeout)）
+    # 复用刚定位到的中心点点击，省掉一次"重新截图 + 重新匹配"。
+    # （若该面板有滑入动画、坐标会漂，就得改成 wait_and_click_image(image_path_1,
+    #   region=region, timeout=probe_timeout) —— 让它重新定位后再点）
     click_pos(center[0], center[1], duration=duration)
     print("✅ 检测到 自动战斗按钮 并点击")
 
@@ -689,7 +796,9 @@ def set_speed(slow_image_path: str,
     :param verify_timeout: 点击后等"档位真的换了"的窗口，比探测窗口要长
     :param diagnose_miss: 某一步没探到时，补打一行该模板的最高分 @ 位置（多截一帧）。
         x1/x2 互相关高达 0.86，调阈值时特别需要看到实际分数，默认关
-    :return: SpeedState 三态，见类文档
+    :return: 本函数只可能返回三种：ALREADY_FAST（本来就是目标档）/ CHANGED（本次点击切档）/
+        UNKNOWN（两种倍速图标都没探到，或点击后复核失败）。
+        ⚠️ 未传 fast_image_path 时无从复核：只要点下去了就直接算 CHANGED
     """
     # 1) 给了目标倍速模板就先看它：命中即无需动作，幂等的最优路径（严格阈值判定档位）
     if fast_image_path:
@@ -752,6 +861,10 @@ def auto_battle_with_speed(auto_off_image: str, speed_slow_image: str,
     一场战斗只调用一次（放在"战斗刚开始、战斗界面刚出现"的位置）：检测一次定论，
     整场战斗过程中不再重复检测 —— 不要放进战斗循环里反复调用。
 
+    ⚠️ 本函数（连同 ensure_auto_battle / set_speed）**固定走灰度匹配**，没有 color 开关：
+       这两条阈值线（AUTO_STATE_CONFIDENCE 0.55 / SPEED_STATE_CONFIDENCE 0.9）都是按灰度
+       实测标定的紧线，改走彩色需要整条链路重新标定（见模块头 v14）。
+
     :param auto_off_image: 自动战斗"未开启态"图标（绿色"自动"）
     :param speed_slow_image: 低倍速图标（如 x1），看到它说明还没加速
     :param region: 搜索区域 (left, top, width, height)，None = 全屏
@@ -775,7 +888,8 @@ def auto_battle_with_speed(auto_off_image: str, speed_slow_image: str,
         （战斗界面 UI 会淡出，后续场次按钮变半透明、两个模板分数都掉到 0.5 左右，
         任何阈值都分不开；此时沿用比报"未确认"准确）。倍速不做沿用，见模块内注释。
     :param desc: 打印状态时带的说明（如"第 3 轮"）
-    :return: BattleUiReport（auto / speed 各为多态；.ok 表示两项都已确认就绪）
+    :return: BattleUiReport（auto / speed 各为多态；.ok 表示两项都已确认就绪）。
+        auto 为 REUSED 表示"本场没探到按钮、沿用了本进程内已确认的状态"，不算本场确认
     """
     global _auto_battle_memo
     templates = [auto_off_image, speed_slow_image]
