@@ -5,9 +5,12 @@ from screenshot_utils import (auto_battle_with_speed, click_pos, wait_and_click_
 
 # ================= 配置区域 =================
 # 图片路径
-IMG_ENTRY = 'image/SC/SC_01_Entrance.png'
-IMG_START = 'image/SC/SC_02_start_btn.png'
-IMG_VICTORY = 'image/SC/SC_03_victory_flag.png'
+IMG_ENTRY = 'image/SC/SC_01_Entrance.png'# 入口
+IMG_RESET1 = 'image/SC/SC_02_reset1.png' # 重置(剩余1次)
+IMG_RESET0 = 'image/SC/SC_03_reset0.png' # 重置(剩余0次)
+IMG_START = 'image/SC/SC_04_start_btn.png' # 开战
+IMG_VICTORY = 'image/SC/SC_05_victory_flag.png'# 确认胜利
+
 
 # 战斗界面（自动战斗 / 倍速）图标
 # 用 *_tight 版：原图把按钮周围的战斗场景背景也框进去了，背景一变分数就被拖垮。
@@ -20,6 +23,7 @@ IMG_SPEED_FAST = 'image/game_ui_snapshots/tag_speed_2x.png'  # 倍速 x2（目�
 
 # 区域限制（加速匹配）
 REGION_ENTRY = (1020, 76, 380, 70)  # 生存入口
+REGION_RESET = (949,926,1115,979)  # 重置
 REGION_START = (878, 210, 172, 63)  # 开始按钮
 REGION_VICTORY = (895, 641, 134, 40)  # 胜利后确认
 REGION_BATTLE_UI = (1185, 860, 154, 100)  # 战斗界面图标区域（自动战斗 + 倍速）
@@ -115,7 +119,7 @@ def main():
 
     # 2. 重置（回到主界面）
     print("重置演习一次...")
-    click_pos(*POS_RESET)
+    wait_and_click_image(IMG_RESET1,region=REGION_RESET)
     time.sleep(1)
 
     # 3~5. 三场战斗。do_battle 返回 False 表示这场没打起来（找不到开始按钮），

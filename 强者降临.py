@@ -69,7 +69,7 @@ def do_battle_round(round_num):
 
     # 2. 点击“进入战斗”（固定坐标）
     print("点击进入战斗按钮...")
-    click_pos(POS_ENTER_BATTLE[0], POS_ENTER_BATTLE[1])
+    click_pos(*POS_ENTER_BATTLE)
     time.sleep(2)  # 等待加载
 
     # 3.检测并点击开战按钮
@@ -77,7 +77,7 @@ def do_battle_round(round_num):
     start_war = wait_and_click_image(IMG_START_WAR, region=REGION_START_WAR, desc="开战按钮")
     if not start_war:
         print("❌ 未检测到开战按钮，尝试直接点击固定坐标...")
-        click_pos(POS_START_WAR[0], POS_START_WAR[1])
+        click_pos(*POS_START_WAR)
     time.sleep(1)  # 等待战斗开始
 
     # 战斗开始：检测一次自动战斗与倍速。本进程确认过一次就不再重复检测这两个按钮。
@@ -94,18 +94,18 @@ def do_battle_round(round_num):
     if not victory_found:
         # 如果没检测到胜利，也尝试点击确认（防止漏检）
         print("⚠️ 未检测到胜利，尝试直接点击确认")
-        click_pos(POS_CONFIRM[0], POS_CONFIRM[1])
+        click_pos(*POS_CONFIRM)
 
     # 5. 检测通关标识,领取奖励
     clear_found = wait_and_click_image(IMG_CLEAR, region=REGION_CLEAR, timeout=10, desc="通关奖励确认")
     if clear_found:
         # 点击通关后的“确认”按钮（固定坐标）
         print("点击通关确认...")
-        click_pos(POS_CLEAR_CONFIRM[0], POS_CLEAR_CONFIRM[1])
+
     else:
         # 未检测到通关标识，可能已自动完成，也尝试点击确认
         print("⚠️ 未检测到通关，尝试点击通关确认")
-        click_pos(POS_CLEAR_CONFIRM[0], POS_CLEAR_CONFIRM[1])
+        click_pos(*POS_CLEAR_CONFIRM)
 
     print(f"====== 第 {round_num} 轮完成 ======\n")
     return True

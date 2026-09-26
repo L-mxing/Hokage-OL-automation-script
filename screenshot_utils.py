@@ -46,6 +46,9 @@ v12：未命中就地补打"最高分 @ 位置"（2026-09-17）。原来只有"�
     就是这么被埋掉的）。现在 ensure_auto_battle / set_speed 的每一步未命中都各补一行，
     由 auto_battle_with_speed 的 diagnose_miss（默认开）统一控制；只在失败路径多截一帧
     （约 10~30ms），命中路径零开销。诊断自身的异常一律只提示、不打断战斗流程。
+v13：新增 count_matches()（2026-09-22）：数同一个图标在区域里出现了几次。
+    locate_on_screen / locate_many_on_screen 都只给"最佳的那一个位置"，数不了个数；
+    八门遁甲需要数"背包还剩几个空格子"，就补了这个。纯新增，不改动任何既有函数。
 """
 from __future__ import annotations # python版本3.10以上可不写
 
@@ -63,6 +66,7 @@ import mss
 __all__ = [
     "locate_on_screen",
     "locate_many_on_screen",
+    "count_matches",
     "describe_matches",
     "click_pos",
     "wait_and_click_image",
@@ -245,6 +249,52 @@ def locate_many_on_screen(image_paths, region: tuple[int, int, int, int] | None 
         else:
             found[path] = None
     return found
+
+
+def count_matches(image_path: str, region: tuple[int, int, int, int] | None = None,
+                  confidence: float = DEFAULT_CONFIDENCE,
+                  min_distance: int = 20) -> tuple[int, float]:
+    """数同一个模板在区域里出现了几次，返回 (个数, 区域内最高分)。
+
+    locate_on_screen 只给"最佳的那一个位置"、locate_many_on_screen 也是每个模板一个，
+    都数不了个数。数"背包还剩几个空格子"这类需求就得单独来一趟。
+
+    去重规则：两个命中点的中心相距小于 min_distance 像素时算同一个图标。
+    默认 20 是给"格子间距 ~95px"那种场景用的（实测 20/0 两态都数得准）；
+    图标挨得很近时这个值要按实际间距调小。
+
+    :param image_path: 模板路径
+    :param region: 搜索区域 (left, top, width, height)，None = 全屏
+    :param confidence: 命中阈值
+    :param min_distance: 去重半径（像素）
+    :return: (命中个数, 区域内最高分)；模板比区域大时返回 (0, 0.0)
+    """
+    template = _load_template(image_path)
+    th, tw = template.shape[:2]
+
+    offset_x = offset_y = 0
+    if region:
+        left, top, width, height = region
+        offset_x, offset_y = left, top
+        if tw > width or th > height:
+            return 0, 0.0
+        mon = {"left": left, "top": top, "width": width, "height": height}
+    else:
+        mon = _sct.monitors[1]
+
+    frame = cv2.cvtColor(np.array(_sct.grab(mon))[:, :, :3], cv2.COLOR_BGR2GRAY)
+    if th > frame.shape[0] or tw > frame.shape[1]:
+        return 0, 0.0
+
+    result = cv2.matchTemplate(frame, template, cv2.TM_CCOEFF_NORMED)
+    ys, xs = np.where(result >= confidence)
+    limit = min_distance ** 2
+    centers: list[tuple[int, int]] = []
+    for y, x in zip(ys, xs):
+        cx, cy = int(x) + tw // 2 + offset_x, int(y) + th // 2 + offset_y
+        if all((cx - px) ** 2 + (cy - py) ** 2 > limit for px, py in centers):
+            centers.append((cx, cy))
+    return len(centers), float(result.max())
 
 
 def describe_matches(image_paths, region: tuple[int, int, int, int] | None = None,

@@ -65,7 +65,7 @@ def capture_region(x_1, y_1, x_2, y_2, output_path="screenshot.png"):
 
 
 if __name__ == "__main__":
-    save_path = capture_region(1200, 878, 1270, 949, "screenshots/SC_02_start_btn.png")
+    save_path = capture_region(1200, 878, 1270, 949, "screenshots/SC_04_start_btn.png")
     print(f"截图已保存到：{save_path}")
 
 
