@@ -1,21 +1,33 @@
-# 运行时依赖：hokage_ol_gui.py 及其按顺序拉起的 6 个游戏脚本
+# ============================================================================
+# 火影 OL 自动化脚本 - 依赖清单
+# ============================================================================
+# 环境要求：Python >= 3.11（numpy 2.x 需要）；Windows 官方安装包自带 tkinter，
+#           Linux 精简环境需另装 python3-tk。
 #
-# 关于 opencv-python：
-#   本项目不需要 cv2 的 GUI 能力（截图走 mss、取色走 mss.pixel、界面走 Tk），
-#   正式脚本里也没有任何 imshow/waitKey 调用（只有开发期的 screenshot_ui.py 用过）。
-#   若想减小体积、避免 Qt 插件与 Tk 冲突，可换成 opencv-python-headless，
-#   但必须"先卸载再安装"——两个包会互相覆盖 site-packages/cv2：
-#       pip uninstall -y opencv-python
-#       pip install opencv-python-headless
-#   这里保持原样不动，是为了不破坏已经装好的虚拟环境。
+# 常用命令（在项目根目录执行）：
+#   pip install -r requirements.txt                  # 按版本清单安装
+#   pip install -r requirements.txt --upgrade        # 升级到清单指定的版本
+#   pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+#                                                    # 国内网络慢时换镜像源
+#   pip freeze > requirements-lock.txt               # 导出含间接依赖的完整快照
 #
-# 关于 pillow：
-#   pyautogui 的依赖链本来就会间接引入 Pillow；这里显式列出，是因为
-#   拼图.py / 查看截图匹配分数.py 直接 import PIL。只跑主流程时用不到它。
+# 离线部署：
+#   pip download -r requirements.txt -d ./wheels      # 联网机器下载安装包
+#   pip install --no-index --find-links=./wheels -r requirements.txt
+#                                                    # 离线机器安装
+#
+# 说明：
+#   - 这里只列“直接导入”的第三方库，间接依赖由 pip 自动解析安装：
+#       pyautogui            -> pyscreeze / pygetwindow / pymsgbox / pytweening / mouseinfo
+#       rapidocr_onnxruntime -> onnxruntime / pyclipper / Shapely / PyYAML / six
+#   - 首次运行 OCR 相关脚本（忍者测验答题.py、通缉任务.py）时会加载 RapidOCR 模型，
+#     稍慢属正常现象。
+#   - 无显示器/服务器环境可把 opencv-python 换成 opencv-python-headless。
+# ============================================================================
 
-numpy==2.5.2
-opencv-python==5.0.0.93
-pillow==12.3.0
-pyautogui==0.9.54
-mss==10.2.0
-rapidocr_onnxruntime==1.2.3
+numpy==2.5.4                 # 数组与数值运算，图像匹配、像素对比的基础
+opencv-python==5.0.0.93      # 模板匹配（cv2.matchTemplate）、图像缩放与掩码处理
+pillow==13.0.0               # PIL.ImageGrab 屏幕截取；pyautogui 截图也依赖它
+pyautogui==0.9.54            # 鼠标点击、移动、键盘输入等界面操作
+mss==10.2.0                  # 毫秒级高速截屏（比 PIL 快，动画循环里用）
+rapidocr_onnxruntime==1.2.3  # ONNX 版 OCR 文字识别，解析答题/任务界面文本

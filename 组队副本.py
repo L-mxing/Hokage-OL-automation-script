@@ -129,7 +129,7 @@ def main():
         do_battle_round(i)
         time.sleep(2)  # 轮次间隔
 
-    click_pos(*POS_EXIT_DUNGEON)
+    click_pos(*POS_EXIT_DUNGEON,duration=0.5)
 
     print("====== 全部轮次执行完毕 ======")
 

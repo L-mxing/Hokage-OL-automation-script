@@ -119,7 +119,7 @@ def main():
 
     # 2. 重置（回到主界面）
     print("重置演习一次...")
-    wait_and_click_image(IMG_RESET1,region=REGION_RESET)
+    wait_and_click_image(IMG_RESET1,region=REGION_RESET,duration=0.5)
     time.sleep(1)
 
     # 3~5. 三场战斗。do_battle 返回 False 表示这场没打起来（找不到开始按钮），
